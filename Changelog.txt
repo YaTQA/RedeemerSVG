@@ -11,3 +11,12 @@ v0.2-alpha
   Anmerkung: Man kann in SVG eigentlich alles referenzieren, allerdings kommt die Engine mit inhaltslosen Tags nicht klar.
 - Es wurde eine Liste hinzugefügt, die die use-Referenzen speichert, die derzeit verarbeitet werden, sodass Rekursion verhindert wird (ein use-Tag kann sich nicht mehr selbst aufrufen).
 - Das Memory-Management beim Erstellen wurde geändert, Create erstellt jetzt bereits ein 1x1 großes leeres Bild.
+
+v0.2b-alpha
+- Ungenutzte Variable entfernt
+- Ungültiges UTF-8 führt nicht mehr zu einem Abbruch
+- Create() nach public verschoben und reintroduce-Flag gesetzt
+
+Geplant für: v0.3
+- SameText überall nutzen
+- Create-Methoden der Hilfsklassen nach public verschieben

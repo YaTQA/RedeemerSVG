@@ -1,5 +1,14 @@
 unit RedeemerSVG;
 
+(* RedeemerSVG.TSVGImage
+ * 0.2b-alpha
+ * Copyright © 2017 Janni K. (redeemer.biz)
+ *
+ * Aufgrund des frühen Entwicklungsstadiums:
+ * Lizenziert unter der Microsoft Reference Source License
+ * Weiterverbreitung des Quelltextes und abgeleiteter Werke nur mit Erlaubnis
+ *)
+
 interface
 
 uses
@@ -7,6 +16,12 @@ uses
   RedeemerHypertextColors, RedeemerHypertextColorsCSS, Classes, RedeemerFloat,
   StrUtils, Kollegah, Math, RedeemerScale, RedeemerSVGHelpers, inifiles, Types,
   Generics.Collections;
+
+type
+  TCustomUTF8Encoding = class(TUTF7Encoding)
+  public
+    constructor Create; override;
+end;
 
 type TRealRect = record
   Left, Top, Width, Height: Extended;
@@ -47,7 +62,6 @@ end;
 type TSizeCallbackEvent = procedure (const Viewport: TRealRect; var Dimensions: TRealPoint) of object;
 
 type TSVGImage = class(TPNGImage)
-  constructor Create();
   private
     procedure InitDrawing();
     procedure FinishDrawing(const Context: TSVGContext);
@@ -86,6 +100,7 @@ type TSVGImage = class(TPNGImage)
       TempSupersample = 32;
       FinalSupersample = 3;
   public
+    constructor Create(); reintroduce;
     procedure LoadFromStream(Stream: TStream); override;
 end;
 
@@ -350,7 +365,6 @@ end;
 function TSVGImage.GetURLRef(const URL: string; const List: TDictionary<string,Integer>; out Value: Integer): Boolean;
 var
   s, s2: string;
-  i: Integer;
 begin
   Result := False;
   if List = Colors then
@@ -634,13 +648,16 @@ var
   haswidth, hasheight: Boolean;
   Coords: TCoordinates;
   Scale: Extended;
+  Encoding: TCustomUTF8Encoding;
 begin
   sl := TStringList.Create;
+  Encoding := TCustomUTF8Encoding.Create;
   try
-    sl.LoadFromStream(Stream, TEncoding.UTF8);
+    sl.LoadFromStream(Stream, Encoding);
     XML := TRedeemerXML.Create(sl.Text);
   finally
     sl.Free;
+    Encoding.Free;
   end;
   Colors := Generics.Collections.TDictionary<string,Integer>.Create;
   Symbols := Generics.Collections.TDictionary<string,Integer>.Create;
@@ -1025,6 +1042,13 @@ begin
 
   Result := True;
 
+end;
+
+{ TCustomUTF8Encoding }
+
+constructor TCustomUTF8Encoding.Create;
+begin
+  inherited Create(CP_UTF8, 0, 0); // Embas UTF8 setzt MB_ERR_INVALID_CHARS und führt zu dem Problem
 end;
 
 initialization
