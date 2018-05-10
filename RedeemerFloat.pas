@@ -45,7 +45,7 @@ begin
     Result := Exponent * (IntPart + (FracPart / Factor) - 1)
   end
   else
-  Result := StrToIntDef(s, -1);
+  Result := Exponent * StrToIntDef(s, -1);
 end;
 
 end.

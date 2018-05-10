@@ -3,9 +3,10 @@ unit RedeemerSVG;
 interface
 
 uses
-  PNGImage, Graphics, Sysutils, RedeemerAffineGeometry, RedeemerXML, RedeemerFloat,
-  RedeemerHypertextColors, RedeemerHypertextColorsCSS, Classes, Types, Windows,
-  StrUtils, Kollegah, Math, RedeemerScale, RedeemerSVGHelpers, inifiles;
+  PNGImage, Graphics, Sysutils, RedeemerAffineGeometry, RedeemerXML, Windows,
+  RedeemerHypertextColors, RedeemerHypertextColorsCSS, Classes, RedeemerFloat,
+  StrUtils, Kollegah, Math, RedeemerScale, RedeemerSVGHelpers, inifiles, Types,
+  Generics.Collections;
 
 type TRealRect = record
   Left, Top, Width, Height: Extended;
@@ -46,6 +47,7 @@ end;
 type TSizeCallbackEvent = procedure (const Viewport: TRealRect; var Dimensions: TRealPoint) of object;
 
 type TSVGImage = class(TPNGImage)
+  constructor Create();
   private
     procedure InitDrawing();
     procedure FinishDrawing(const Context: TSVGContext);
@@ -54,7 +56,7 @@ type TSVGImage = class(TPNGImage)
     function GetOnlyValue(const Attribute: string; out Value: Extended; const PercentageMeasure: Extended): Boolean; overload;
     function GetOnlyValueDef(const Attribute: string; const Default: Extended): Extended; overload;
     function GetOnlyValueDef(const Attribute: string; const PercentageMeasure: Extended; const Default: Extended): Extended; overload;
-    function GetURLRef(const URL: string; List: THashedStringList; out Value: Integer): Boolean;
+    function GetURLRef(const URL: string; const List: TDictionary<string,Integer>; out Value: Integer): Boolean;
     function GetColorExt(const S: string; out Color: TColor): Boolean;
     procedure LoadBrush(const Fill: TFill);
     procedure LoadPen(const Stroke: TStroke; const Context: TSVGContext);
@@ -76,10 +78,10 @@ type TSVGImage = class(TPNGImage)
       OpacityPNG: TPNGImage;
       ChromaPNG: TPNGImage;
       XML: TRedeemerXML;
-      //FinalTransformation: TAffineTransformation;
       InnerTransformation: TAffineTransformation;
-      Symbols: THashedStringList;
-      Colors: THashedStringList;
+      Symbols: TDictionary<string,Integer>;
+      Colors: TDictionary<string,Integer>;
+      Recalls: TList<string>;
     const
       TempSupersample = 32;
       FinalSupersample = 3;
@@ -95,7 +97,7 @@ var
 implementation
 
 uses
-  Forms; // für Screen
+  Forms, DateUtils; // für Screen
 
 function RealRect(Left, Top, Width, Height: Extended): TRealRect;
 begin
@@ -106,6 +108,11 @@ begin
 end;
 
 { TSVGImage }
+
+constructor TSVGImage.Create;
+begin
+  inherited CreateBlank(COLOR_RGBALPHA, 8, 1, 1); // 0 führt beim Setzen einer neuen Größe zum Fehler
+end;
 
 procedure TSVGImage.DrawPoly(Context: TSVGContext; const d: string);
 var
@@ -340,7 +347,7 @@ begin
   Result := XML.GetAttribute(Name, Value);
 end;
 
-function TSVGImage.GetURLRef(const URL: string; List: THashedStringList; out Value: Integer): Boolean;
+function TSVGImage.GetURLRef(const URL: string; const List: TDictionary<string,Integer>; out Value: Integer): Boolean;
 var
   s, s2: string;
   i: Integer;
@@ -357,14 +364,9 @@ begin
   if StartsStr('#', s2) then
   begin
     Delete(s2, 1, 1);
-    i := List.IndexOfName(s2);
-    if i > -1 then
-    begin
-      s := List[i];
-      Delete(s, 1, Length(s2) + 1);
-      Value := StrToInt(s);
-      Result := True;
-    end;
+    Result := List.ContainsKey(s2);
+    if Result then
+    Value := List[s2];
   end;
 end;
 
@@ -413,7 +415,7 @@ begin
     Exit
     else
     if SameText(XML.CurrentTag, 'symbol') then
-    Symbols.Add(XML.GetAttributeDef('id', '') + '=' + IntToStr(XML.Position))
+    Symbols.Add(XML.GetAttributeDef('id', ''), XML.Position)
     else
     if SameText(XML.CurrentTag, 'radialGradient') or SameText(XML.CurrentTag, 'linearGradient') then
     NextStopName := XML.GetAttributeDef('id', '')
@@ -421,7 +423,7 @@ begin
     if SameText(XML.CurrentTag, 'stop') and (NextStopName <> '') then
     if RedeemerHypertextColors.HTMLToColor(XML.GetAttributeDef('stop-color', ''), i, CSSColors) then
     begin
-      Colors.Add(NextStopName + '=' + IntToStr(Integer(i)));
+      Colors.Add(NextStopName, Integer(i));
       NextStopName := '';
     end
     else
@@ -429,7 +431,7 @@ begin
     if SameText(XML.CurrentTag, 'solidcolor') then
     if RedeemerHypertextColors.HTMLToColor(XML.GetAttributeDef('solid-color', ''), i, CSSColors) then
     begin
-      Colors.Add(XML.GetAttributeDef('id', '') + '=' + IntToStr(Integer(i)));
+      Colors.Add(XML.GetAttributeDef('id', ''), Integer(i));
       NextStopName := '';
     end;
   end;
@@ -550,7 +552,6 @@ begin
   else
   if s = 'middle' then
   SetTextAlign(ChromaPNG.Canvas.Handle, TA_CENTER or TA_BOTTOM);
-
   // Text zeichnen
   s := XML.GetInnerTextAndSkip;
   if s <> '' then
@@ -586,16 +587,23 @@ end;
 procedure TSVGImage.HandleUse(Context: TSVGContext);
 var
   OldPos, NewPos: Integer;
+  s: string;
 begin
   ReadStyle(Context); // Eigenschaften des aufrufenden use-Tags lesen
   OldPos := XML.Position;
-  if GetURLRef(XML.GetAttributeDef('xlink:href', ''), Symbols, NewPos) then
+  if XML.GetAttribute('xlink:href', s) then
+  if GetURLRef(s, Symbols, NewPos) then
+  if not Recalls.Contains(s) then
   try
-    XML.CurrentTag := 'symbol';
     XML.Position := NewPos;
+    NewPos := Recalls.Add(s);
+    XML.LoadTagName;
+    XML.LoadAttributes;
     HandleGroup(Context);
+    Recalls.Delete(NewPos);
   finally
     XML.Position := OldPos;
+    //XML.LoadAttributes;
   end;
 end;
 
@@ -634,10 +642,9 @@ begin
   finally
     sl.Free;
   end;
-  Colors := THashedStringList.Create;
-  Colors.CaseSensitive := True;
-  Symbols := THashedStringList.Create;
-  Symbols.CaseSensitive := True;
+  Colors := Generics.Collections.TDictionary<string,Integer>.Create;
+  Symbols := Generics.Collections.TDictionary<string,Integer>.Create;
+  Recalls := Generics.Collections.TList<string>.Create;
   try
     while XML.GoToAndGetNextTag do
     if XML.CurrentTag = 'svg' then
@@ -702,7 +709,8 @@ begin
       HandleGroup(Context);
 
       // Zusammenlegen der Bilder
-      inherited CreateBlank(COLOR_RGBALPHA, 8, Round(Context.Dimensions.x), Round(Context.Dimensions.y));
+      //inherited CreateBlank(COLOR_RGBALPHA, 8, Round(Context.Dimensions.x), Round(Context.Dimensions.y));
+      inherited SetSize(Round(Context.Dimensions.x), Round(Context.Dimensions.y));
       JoinAndDownscale(ChromaPNG, OpacityPNG, self, True);
 
       Exit; // nur erstes <svg> in der Wurzel bearbeiten (gäbe sonst auch Memory-Leak)
@@ -930,8 +938,14 @@ var
   x1, x2, x3, x4, x5, x6: Extended;
   i: Integer;
 begin
-  // Sichtbarkeit laden, ggf. abbrechen, da display auch das Zeichnen aller Kinder verhindert
   Result := False;
+
+  if XML.CurrentTag = 'g' then
+  if XML.GetAttribute('id', s) then
+  if not Symbols.ContainsKey(s) then
+  Symbols.Add(s, XML.Position);
+
+  // Sichtbarkeit laden, ggf. abbrechen, da display auch das Zeichnen aller Kinder verhindert
   if not Context.Display then Exit;
   CurrentStyle := TStyle.Create(XML.GetAttributeDef('style', ''));
   if GetProperty('display', True, True, s) then
@@ -946,7 +960,7 @@ begin
   ReadFill(Context.Fill);
   ReadStroke(Context.Stroke);
   ReadFont(Context.Font);
-
+  
   // Affine Abbildungen laden
   if XML.GetAttribute('transform', s) then // keine CSS-Eigenschaft!
   try
@@ -1010,6 +1024,7 @@ begin
   end;
 
   Result := True;
+
 end;
 
 initialization

@@ -1,0 +1,13 @@
+v0.1-alpha
+- Erste Veröffentlichung
+
+v0.2-alpha
+- Ein Fehler wurde behoben, durch den die wissenschaftliche e-Schreibweise nur bei Komma-, aber nicht bei Ganzzahlen funktionierte.
+- Bei größeren Dateien ist die Klasse jetzt etwa 50 bis mehrere hundert Mal schneller (StrUtils.MidStr und StrUtils.LeftStr der Hurensohn).
+- Eine mögliche Endlosschleife wurde behoben, falls nach einem Kommentar nicht sofort ein Tag kam.
+- Es wird in allen vorhandenen Klassen jetzt Generics.Collections.TDictionary verwendet.
+(Die Demo zeigt die Ladezeit jetzt in der Titelleiste an.)
+- Es können nun auch Gruppen mit use referenziert werden.
+  Anmerkung: Man kann in SVG eigentlich alles referenzieren, allerdings kommt die Engine mit inhaltslosen Tags nicht klar.
+- Es wurde eine Liste hinzugefügt, die die use-Referenzen speichert, die derzeit verarbeitet werden, sodass Rekursion verhindert wird (ein use-Tag kann sich nicht mehr selbst aufrufen).
+- Das Memory-Management beim Erstellen wurde geändert, Create erstellt jetzt bereits ein 1x1 großes leeres Bild.

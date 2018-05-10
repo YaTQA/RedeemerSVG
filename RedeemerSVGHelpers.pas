@@ -2,16 +2,20 @@ unit RedeemerSVGHelpers;
 
 interface
 
+uses
+  Generics.Collections;
+
 type TStyle = class
   constructor Create(const S: string);
+  destructor Destroy; override;
   private
     var
-      S: string;
+      Properties: TDictionary<string, string>;
   public
     function GetProperty(const Attribute: string; out Value: string): Boolean;
 end;
 
-type TStyleSplitter = class
+type TStyleSplitter = class // Klasse zum Splitten von einzelnen Bestandteilen von CSS-Werten (vor allem Schriftarten und Transformationen)
   constructor Create(const S: string; const SplitAtSpace: Boolean);
   public
     class function GetBracket(const S: string; out Name: string; out Value: string): Boolean;
@@ -253,18 +257,14 @@ end;
 { TStyle }
 
 constructor TStyle.Create(const S: string);
-begin
-  Self.S := S;
-end;
-
-function TStyle.GetProperty(const Attribute: string; out Value: string): Boolean;
 var
   Temp: string;
+  Temp2: string;
   Escaping: (esNone = -1, esSingle = $27, esDouble = $22);
   i: Integer;
 begin
+  Properties := Generics.Collections.TDictionary<string,string>.Create();
   Escaping := esNone;
-  Result := False;
   for i := 1 to Length(s) do
   if Escaping <> esNone then
   if Ord(s[i]) = Integer(Escaping) then
@@ -277,13 +277,11 @@ begin
   else
   case Ord(s[i]) of
     58: begin
-          if Trim(Temp) = Attribute then
-          Result := True;
+          Temp2 := Temp;
           Temp := '';
         end;
     59: begin
-          if Result then
-          Break;
+          Properties.Add(trim(Temp2), Trim(Temp));
           Temp := '';
         end;
     $22: begin
@@ -296,8 +294,21 @@ begin
          end;
     else Temp := Temp + s[i];
   end;
-  Value := Trim(Temp);
-  Exit;
+  if Temp <> '' then
+  Properties.Add(trim(Temp2), Trim(Temp));
+end;
+
+destructor TStyle.Destroy;
+begin
+  Properties.Free;
+  inherited;
+end;
+
+function TStyle.GetProperty(const Attribute: string; out Value: string): Boolean;
+begin
+  Result := Properties.ContainsKey(Attribute);
+  if Result then
+  Value := Properties[Attribute];
 end;
 
 { TStyleSplitter }
@@ -364,8 +375,8 @@ begin
   Result := EndsStr(')', s) and (i > 0);
   if Result then
   begin
-    Name := LeftStr(s, i-1);
-    Value := MidStr(s, i+1, Length(s) - i - 1);
+    Name := Copy(s, 1, i-1);
+    Value := Copy(s, i+1, Length(s) - i - 1);
   end;
 end;
 
