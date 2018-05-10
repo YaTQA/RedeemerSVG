@@ -36,7 +36,7 @@ v0.3-alpha (10 Sep 2017)
 - Berechnete gesamte opacity<0,2 als transparent interpretiert
 - Workaround für Initialisierung mittels TGraphicClass.Create hinzugefügt
 
-v0.4-alpha
+v0.4-alpha (14 Oct 2017)
 - Der Code aus der Create-Methode, der ein neues Bild erstellt, ist jetzt eine eigene Methode in einer eigenen Klasse, da ich ihn auch anderswo benötige. Die Methode wird nun erst beim Laden aus einem Stream aufgerufen.
 - Die Arrays für die Strichelungen und Bezierkurven sind jetzt packed.
 - Weitere Parameter sind jetzt const.
@@ -76,8 +76,16 @@ v0.4-alpha
   Anmerkung: Das verlangsamt das Programm leider um ganz grob etwa 7,5%, allerdings stark abhängig vom Inhalt.
   Anmerkung: Durch diese und weitere Änderungen kann das offizielle SVG-Logo fast richtig geladen werden. Lediglich Unterstützung für ArcTo fehlt.
 
+v0.5-beta (16 Oct 2017)
+- In RedeemerAffineGeometry diverse Funktionen korrigiert und hinzugefügt (unter anderem ein schwerer Fehler bei der Verwendung von affinen Abbildungen auf einen reellen Vektor)
+- ArcTo hinzugefügt (endlich!)
+- Fehler behoben, durch den erstellte PNG-Dateien kein IHDR-Chunk hatten (und deshalb nicht geladen werden konnten)
+  Anmerkung: Umgesetzt durch diverse Typumwandlungen mit Zeigern. RTTI der Hurensohn.
+- Fehler aus v0.4 bezüglich des Ladens von Viewports ohne Viewboxen behoben
+- Fehler aus v0.4 behoben, durch den Präsentationsattribute nicht aus dem Wurzel-svg-Element geladen wurden
+
+
 
 Geplant für: v0.5-beta
 - image
 - Clipping durch viewBox - vielleicht (einiges sieht echt komisch aus in Firefox)
-- Noch mal wegen ArcTo gucken

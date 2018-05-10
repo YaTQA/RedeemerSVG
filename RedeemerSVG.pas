@@ -1,7 +1,7 @@
 unit RedeemerSVG;
 
 (* RedeemerSVG.TSVGImage
- * 0.4-alpha
+ * 0.5-beta
  * Copyright © 2017 Janni K. (redeemer.biz)
  *
  * Aufgrund des frühen Entwicklungsstadiums:
@@ -138,8 +138,9 @@ end;
 procedure TSVGImage.DrawPoly(Context: TSVGContext; const d: string);
 var
   p: TPath;
-  LastEndpoint, LastBezier, NextEndpoint, FirstBezier, SecondBezier: TRealPoint;
-  Dummy: Extended;
+  LastEndpoint, LastBezier, NextEndpoint, FirstBezier, SecondBezier, Radii, DerotatedMidway, DerotatedCenter, Center, Dummy2: TRealPoint;
+  Dummy, Angle, Theta, DeltaTheta: Extended;
+  SweepFlag, LargeArcFlag: Boolean;
 function ConditionalRelativeX(const f: Extended): Extended;
 begin
   if AnsiChar(p.LastType) in ['a'..'z'] then
@@ -181,6 +182,36 @@ procedure ForceGetPoint(out Point: TRealPoint);
 begin
   if not p.GetNextNumber(Point.x) then Abort;
   if not p.GetNextNumber(Point.y) then Abort;
+end;
+procedure DrawArc(const ThetaEnd: Extended);
+function EllipsePoint(const Theta: Extended): TRealPoint;
+begin
+  Result.x := Center.x + Radii.x * Cos(Angle) * Cos(Theta) - Radii.y * Sin(Angle) * Sin(Theta);
+  Result.y := Center.y + Radii.x * Sin(Angle) * Cos(Theta) + Radii.y * Cos(Angle) * Sin(Theta);
+end;
+function EllipseDerive(const Theta: Extended): TRealPoint;
+begin
+  Result.x := -Radii.x * Cos(Angle) * Sin(Theta) - Radii.y * Sin(Angle) * Cos(Theta);
+  Result.y := -Radii.x * Sin(Angle) * Sin(Theta) + Radii.y * Cos(Angle) * Cos(Theta);
+end;
+var
+  PositionToIntersect: Extended;
+begin
+  // Position der Kontrollpunkte auf dem Weg zwischen einem Punkt auf dem Kreis und dem Punkt, an dem sich die Tangenten der beiden Punkte kreuzen, berechnen
+  PositionToIntersect := sin(ThetaEnd - Theta) * (sqrt(4 + 3*sqr(tan((ThetaEnd - Theta) / 2))) - 1) / 3;
+  FirstBezier := EllipsePoint(Theta);
+  with EllipseDerive(Theta) do
+  begin
+    FirstBezier.x := FirstBezier.x + PositionToIntersect * x;
+    FirstBezier.y := FirstBezier.y + PositionToIntersect * y;
+  end;
+  LastEndpoint := EllipsePoint(ThetaEnd);
+  with EllipseDerive(ThetaEnd) do
+  begin
+    SecondBezier.x := LastEndpoint.x - PositionToIntersect * x;
+    SecondBezier.y := LastEndpoint.y - PositionToIntersect * y;
+  end;
+  DrawBezier(SecondBezier);
 end;
 begin
   p := TPath.Create(d);
@@ -261,15 +292,63 @@ begin
                SecondBezier.y := LastEndpoint.y + 2 * (LastBezier.y - LastEndpoint.y) / 3;
                DrawBezier(SecondBezier);
              end;
-        // ArcTo (wird zu einer Geraden)
+        // ArcTo
         'A': begin
+               ForceGetPoint(Radii);
+               if not p.GetNextNumber(Angle) then Abort;
+               Angle := FloatPositiveModulo(Angle, 360); // Definition: Winkel mod 360
                if not p.GetNextNumber(Dummy) then Abort;
+               LargeArcFlag := Dummy <> 0; // Definition: alles außer 0 ist 1
                if not p.GetNextNumber(Dummy) then Abort;
-               if not p.GetNextNumber(Dummy) then Abort;
-               if not p.GetNextNumber(Dummy) then Abort;
-               if not p.GetNextNumber(Dummy) then Abort;
+               SweepFlag := Dummy <> 0;    // Definition: alles außer 0 ist 1
                ForceGetPoint(NextEndpoint);
-               MakeAbsolute(LastEndpoint, NextEndpoint);
+               MakeAbsolute(NextEndpoint, NextEndpoint);
+
+               // Implementation nach https://www.w3.org/TR/SVG/implnote.html#ArcImplementationNotes F.6.5
+               // und https://mortoray.com/2017/02/16/rendering-an-svg-elliptical-arc-as-bezier-curves/
+               DerotatedMidway := AffineTransformation(AffineRotation(-Angle),
+                                  RealPoint((LastEndpoint.x - NextEndpoint.x)/2, (LastEndpoint.y - NextEndpoint.y)/2));
+               Dummy := sqrt((DerotatedMidway.x*DerotatedMidway.x)/(Radii.x*Radii.x)+
+                             (DerotatedMidway.y*DerotatedMidway.y)/(Radii.y*Radii.y));
+               if Dummy > 1 then // Radius zu klein
+               begin
+                 Radii.x := Dummy * Radii.x;
+                 Radii.y := Dummy * Radii.y;
+               end;
+               Dummy := radii.x*radii.x*DerotatedMidway.y*DerotatedMidway.y+radii.y*radii.y*DerotatedMidway.x*DerotatedMidway.x;
+               Dummy := (radii.x*radii.x*radii.y*radii.y-Dummy)/Dummy;
+               if Dummy > 0 then // Rundungsfehler korrigieren
+               Dummy := sqrt(Dummy)
+               else
+               Dummy := 0;
+               if SweepFlag = LargeArcFlag then
+               Dummy := -Dummy;
+               DerotatedCenter.x := Dummy*radii.x*DerotatedMidway.y/radii.y;
+               DerotatedCenter.y := -Dummy*radii.y*DerotatedMidway.x/radii.x;
+               Center := AffineTransformation(AffineRotation(Angle), DerotatedCenter);
+               Center.x := Center.x + (LastEndpoint.x + NextEndpoint.x)/2;
+               Center.y := Center.y + (LastEndpoint.y + NextEndpoint.y)/2;
+
+               //OpacityPNG.Pixels[Round(Center.x*FinalSupersample),Round(Center.y*FinalSupersample)] := clWhite;
+
+               Dummy2 := RealPoint((DerotatedMidway.x-DerotatedCenter.x)/Radii.x, (DerotatedMidway.y-DerotatedCenter.y)/Radii.y);
+               Theta := RadAngle(RealPoint(1,0), Dummy2);
+               DeltaTheta := FloatPositiveModulo(RadAngle(Dummy2,RealPoint((-DerotatedMidway.x-DerotatedCenter.x)/Radii.x, (-DerotatedMidway.y-DerotatedCenter.y)/Radii.y)), Pi * 2);
+               if not SweepFlag then
+               DeltaTheta := DeltaTheta - 2 * Pi;
+               Dummy := 2 * Byte(SweepFlag) - 1; // Signum von DeltaTheta
+
+               //Application.MessageBox(PChar(FloatToStr(Theta) + '/' + FloatToStr(DeltaTheta)), PChar('bla'), 0);
+               Angle := Angle / 180 * pi; // Ab jetzt Bogenmaß
+               while Dummy * DeltaTheta > Pi/2 do
+               begin
+                 DrawArc(Theta+Dummy*Pi/2);
+                 DeltaTheta := DeltaTheta - Dummy * Pi/2; // rechne Richtung 0
+                 Theta := Theta + Dummy * Pi/2;
+               end;
+               DrawArc(Theta+DeltaTheta);
+
+               LastEndpoint := NextEndpoint;
                DrawLineToEndpoint();
              end;
         // CentripetalCatmullRomTo (wird zu einer Geraden)
@@ -737,8 +816,14 @@ begin
       Context.LastViewBox := RealRect(0, 0, 300, 300);
       //ReadPosition;
       ReadAspectRatio(Align, Meet);
-      ReadViewbox(Context.LastViewBox);
-      ReadDimensions(Dimensions, Context);
+      if ReadViewbox(Context.LastViewBox) then
+      ReadDimensions(Dimensions, Context)
+      else
+      begin
+        ReadDimensions(Dimensions, Context);
+        Context.LastViewBox.Width := Dimensions.x;
+        Context.LastViewBox.Height := Dimensions.y;
+      end;
       //Context.LastViewBox := RealRect(0,0,Dimensions.x,Dimensions.y);
 
       // Größe vom Benutzer bestätigen lassen
@@ -783,11 +868,12 @@ begin
       XML.Position := StartPos;
       XML.Done := False;
       XML.LoadTagName;
+      XML.LoadAttributes;
       HandleGroup2(Context);
 
       // Zusammenlegen der Bilder
       InitBlankNonPaletteImage(COLOR_RGBALPHA, 8, Round(Dimensions.x), Round(Dimensions.y));
-      JoinAndDownscale(ChromaPNG, OpacityPNG, self, True);
+      JoinAndDownscale(ChromaPNG, OpacityPNG, Self, True);
 
       Exit; // nur erstes <svg> in der Wurzel bearbeiten
     end;

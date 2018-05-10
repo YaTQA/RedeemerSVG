@@ -28,6 +28,8 @@ function AffineSkewX(const x: Extended): TAffineTransformation;
 function AffineSkewY(const y: Extended): TAffineTransformation;
 //procedure AffineTranslateTransformation(var Inner: TAffineTransformation; const Outer: TRealPoint);
 function AffineInverse(const Transformation: TAffineTransformation; out Inverse: TAffineTransformation): Boolean;
+function RadAngle(const u,v: TRealPoint): Extended;
+function FloatPositiveModulo(const Dividend: Extended; const Divisor: Extended): Extended;
 
 implementation
 
@@ -59,8 +61,8 @@ end;
 
 function AffineTransformation(const Transformation: TAffineTransformation; const Vector: TRealPoint): TRealPoint;
 begin
-  Result.x := Transformation.a*Vector.x + Transformation.c*Vector.x + Transformation.e;
-  Result.y := Transformation.b*Vector.y + Transformation.d*Vector.y + Transformation.f;
+  Result.x := Transformation.a*Vector.x + Transformation.c*Vector.y + Transformation.e;
+  Result.y := Transformation.b*Vector.x + Transformation.d*Vector.y + Transformation.f;
 end;
 
 function AffineTransformation(const Transformation: TAffineTransformation; const Vector: TPoint): TPoint;
@@ -81,8 +83,8 @@ begin
   rad := alpha / 180 * Pi;
   Result.a := cos(rad);
   Result.b := sin(rad);
-  Result.c := -sin(rad);
-  Result.d := cos(rad);
+  Result.c := -Result.b;
+  Result.d := Result.a;
   Result.e := 0;
   Result.f := 0;
 end;
@@ -137,6 +139,32 @@ begin
     Inverse.e := -x;
     Inverse.f := -y;
   end;
+end;
+
+function RadAngle(const u,v: TRealPoint): Extended;
+function DotProduct(const u,v: TRealPoint): Extended;
+begin
+  Result := u.x * v.x + u.y * v.y;
+end;
+begin
+  Result := DotProduct(u,v) / (sqrt(DotProduct(u,u)) * sqrt(DotProduct(v,v)));
+  if Result >= 1 then // Gleitkomma-Ungenauigkeit vorbeugen
+  Result := 0
+  else if Result <= -1 then
+  Result := Pi
+  else
+  Result := Arccos(Result);
+  if u.x*v.y-u.y*v.x < 0 then
+  Result := -Result;
+end;
+
+function FloatPositiveModulo(const Dividend: Extended; const Divisor: Extended): Extended;
+begin
+  // Modulo-Funktion, die mit negativen Dividenden und Gleitkommazahlen funktioniert
+  //if Dividend < 0 then // negative Dividenden auflösen
+  Result := Dividend + Ceil(-Dividend/Divisor) * Divisor
+  //else
+  //Result := Dividend + Ceil(-Dividend/Divisor);
 end;
 
 end.
