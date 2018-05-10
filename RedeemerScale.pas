@@ -3,17 +3,17 @@ unit RedeemerScale;
 interface
 
 uses
-  PNGImage, Graphics;
+  PNGImage, Graphics, Windows;
 
-procedure PNGResize3to1(Source: TPngImage; Free: Boolean; var Result: TPngImage; CreateResult: Boolean);
-procedure JoinAndDownscale(Chroma, Opacity, Result: TPNGImage; Free: Boolean = True);
+procedure PNGResize3to1(const Source: TPngImage; const Free: Boolean; var Result: TPngImage; const CreateResult: Boolean);
+procedure JoinAndDownscale(const Chroma, Opacity: TPngImage; Result: TPNGImage; const Free: Boolean = True);
 
 implementation
 
 uses
   RTLConsts, Consts;
 
-procedure PNGResize3to1(Source: TPngImage; Free: Boolean; var Result: TPngImage; CreateResult: Boolean);
+procedure PNGResize3to1(const Source: TPngImage; const Free: Boolean; var Result: TPngImage; const CreateResult: Boolean);
 var
   i, j: Integer;
   Sum: Word;
@@ -72,7 +72,7 @@ begin
   Source.Free;
 end;
 
-procedure JoinAndDownscale(Chroma, Opacity, Result: TPNGImage; Free: Boolean = True);
+procedure JoinAndDownscale(const Chroma, Opacity: TPNGImage; Result: TPNGImage; const Free: Boolean = True);
 var
   Scanline, Scanline2: pByteArray;
   x,y: Integer;

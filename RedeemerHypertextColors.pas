@@ -19,7 +19,7 @@ uses
   RedeemerSVGHelpers, shlwapi, StrUtils;
 
 function HTMLToColor(HTML: string; out Color: TColor; const ColorNames: array of TColorName): Boolean;
-procedure FindColor(Pattern: string; Low, High: Integer; var Result: TColor);
+procedure FindColor(const Pattern: string; const Low, High: Integer; var Result: TColor);
 var
   n: Integer;
 begin

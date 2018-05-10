@@ -11,8 +11,8 @@ type
     Code: Cardinal;
   end;
 
-function UCS4Chr(c: Cardinal): UnicodeString;
-function RemoveEntities(s: string): string;
+function UCS4Chr(const c: Cardinal): UnicodeString;
+function RemoveEntities(const s: string): string;
 
 const
   Entities: array[0..2124] of TEntityName = (
@@ -2144,10 +2144,9 @@ const
 
 implementation
 
-uses
-  AnsiStrings;
+uses AnsiStrings;
 
-function UCS4Chr(c: Cardinal): UnicodeString;
+function UCS4Chr(const c: Cardinal): UnicodeString;
 begin
   if c < $10000 then
   Result := Chr(c)
@@ -2155,12 +2154,12 @@ begin
   Result := Chr((c - $10000) shr 10 and $3FF or $D800) + Chr((c - $10000) and $3FF or $DC00);
 end;
 
-function RemoveEntities(s: string): string;
+function RemoveEntities(const s: string): string;
 var
   i, j, k: Integer;
   s2: string;
   entityresult: string;
-procedure FindEntity(Pattern: AnsiString; Low, High: Integer; var Result: string);
+procedure FindEntity(const Pattern: AnsiString; const Low, High: Integer; var Result: string);
 var
   n: Integer;
 begin
@@ -2178,11 +2177,8 @@ begin
     inc(i,Length(Entities[n].Name));
     // Die, die kein Apostroph haben, können eins haben
     if not AnsiStrings.EndsStr(';', Entities[n].Name) then
-    begin
-      Delete(Pattern, 1, Length(Entities[n].Name));
-      if AnsiStrings.StartsStr(';', Pattern) then
-      inc(i);
-    end;
+    if Copy(Pattern, 1 + Length(Entities[n].Name), 1) = ';' then
+    inc(i);
   end
   else
   if Entities[n].Name > Pattern then

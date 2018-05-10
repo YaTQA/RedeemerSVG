@@ -7,14 +7,12 @@ uses
 
 type
   TPoints = packed array of tagPOINT;
-  //PPoints = ^TPoints;
-  //PTypes = ^TBytes;
 
-procedure Bosstransformation(const SourcehDC: Cardinal; const TargethDC: array of Cardinal; const Transformation: TAffineTransformation; StrokeFirst: Boolean);
+procedure Bosstransformation(const SourcehDC: Cardinal; const TargethDC: array of Cardinal; const Transformation: TAffineTransformation; const StrokeFirst: Boolean);
 
 implementation
 
-procedure Bosstransformation(const SourcehDC: Cardinal; const TargethDC: array of Cardinal; const Transformation: TAffineTransformation; StrokeFirst: Boolean);
+procedure Bosstransformation(const SourcehDC: Cardinal; const TargethDC: array of Cardinal; const Transformation: TAffineTransformation; const StrokeFirst: Boolean);
 var
   Points: TPoints;
   Types: TBytes;
@@ -38,7 +36,7 @@ begin
     PolyDraw(i, Points[0], Types[0], Count);
     EndPath(i);
     FillPath(i);
-    // Zeichne die Linie einzeln, da ohne aktiven Pfad auch Sprünge funktionieren
+    // Zeichne die Linie einzeln (statt mit StrokeAndFillPath), da ohne aktiven Pfad auch Sprünge funktionieren
     if not StrokeFirst then
     PolyDraw(i, Points[0], Types[0], Count);
   end;

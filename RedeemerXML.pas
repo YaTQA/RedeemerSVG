@@ -5,12 +5,16 @@ interface
 uses Generics.Collections;
 
 type TRedeemerXML = class
+  private
+    var
+      Text: string;
+      TextLength: Integer;
+      Attributes: TDictionary<string,string>;
   public
     constructor Create(const Text: string);
     destructor Destroy(); override;
     class function Clean(const Text: string): string;
     function  GoToAndGetNextTag: Boolean;
-    function  IsSelfClosing(): Boolean;
     procedure LoadAttributes;
     procedure LoadTagName;
     function  GetAttribute(const Attribute: string): string; overload;
@@ -19,22 +23,22 @@ type TRedeemerXML = class
     function  GetInnerTextAndSkip: string;
     var
       CurrentTag: string;
+      IsSelfClosing: Boolean;
       Position: Integer;
       Done: Boolean;
-      Attributes: TDictionary<string,string>;
-    Text: string;
   end;
 
 implementation
 
 uses
-  SysUtils, StrUtils, Math, RedeemerEntities, DateUtils;
+  SysUtils, StrUtils, Math, RedeemerEntities;
 
 { TRedeemerXML }
 
 constructor TRedeemerXML.Create(const Text: string);
 begin
   Self.Text := Clean(Text) + ' ';
+  TextLength := Length(Self.Text);
   Position := 0;
   Done := False;
   Attributes := Generics.Collections.TDictionary<string,string>.Create();
@@ -96,7 +100,7 @@ var
   i: Integer;
 begin
   Result := '';
-  if IsSelfClosing then Exit; // Inhaltslos
+  if IsSelfClosing then Exit; // inhaltslos
   EndTag := '/' + CurrentTag;
   repeat
     i := PosEx('>', Text, Position) + 1;
@@ -135,14 +139,9 @@ begin
   Result := True;
 end;
 
-function TRedeemerXML.IsSelfClosing: Boolean;
-begin
-  Result := Attributes.ContainsKey('/'); // Dieser Lösungsansatz ist so unglaublich banal
-end;
-
 procedure TRedeemerXML.LoadAttributes;
 var
-  i, j, l: Integer;
+  i, j: Integer;
   temp: string;
   Value: string;
 function MinNotZero(const Char1: string): Integer;
@@ -161,15 +160,14 @@ begin
 end;
 begin
   Attributes.Clear;
-  i := Position;
-  l := Length(Text);
-  Temp := '';
-  while i <= l do
+  IsSelfClosing := Copy(Text, PosEx('>', Text, Position+1)-1,2) = '/>';
+  i := Position + Length(CurrentTag) + 1;
+  while i <= TextLength do
   if Text[i] = '>' then
   begin
     if Temp <> '' then
     if not Attributes.ContainsKey(Temp) then // kein Überbleibsel
-    Attributes.Add(Temp, ''); // Leeres Attribut
+    Attributes.Add(Temp, ''); // leeres Attribut
     Exit;
   end
   else
@@ -179,7 +177,10 @@ begin
     begin
       j := PosEx('"', Text, i+2);
       Value := RemoveEntities(Copy(Text, i+2, j - i - 2));
+      try
       Attributes.Add(temp, value);
+      except
+      end;
       inc(j, 1);
     end
     else
@@ -187,14 +188,20 @@ begin
     begin
       j := PosEx('''', Text, i+2);
       Value := RemoveEntities(Copy(Text, i+2, j - i - 2));
+      try
       Attributes.Add(temp, value);
+      except
+      end;
       inc(j, 1);
     end
     else
     begin
       j := MinNotZero(' ');
       Value := RemoveEntities(Copy(Text, i+1, j - i - 1));
+      try
       Attributes.Add(temp, value);
+      except
+      end;
     end;
     i := j;
   end
@@ -204,6 +211,12 @@ begin
     j := MinNotZero('=');
     Temp := lowercase(Copy(Text, i+1, j - i - 1));
     i := j;
+  end
+  else
+  if Text[i] = '/' then
+  begin
+    IsSelfClosing := True;
+    Inc(i);
   end
   else
   inc(i);

@@ -1,12 +1,16 @@
 unit RedeemerSVG;
 
 (* RedeemerSVG.TSVGImage
- * 0.2b-alpha
+ * 0.4-alpha
  * Copyright © 2017 Janni K. (redeemer.biz)
  *
  * Aufgrund des frühen Entwicklungsstadiums:
  * Lizenziert unter der Microsoft Reference Source License
  * Weiterverbreitung des Quelltextes und abgeleiteter Werke nur mit Erlaubnis
+ *
+ * Because of early development stage:
+ * Licensed under Microsoft Reference Source License
+ * Destribution of source code and derived works with my written consent
  *)
 
 interface
@@ -15,7 +19,7 @@ uses
   PNGImage, Graphics, Sysutils, RedeemerAffineGeometry, RedeemerXML, Windows,
   RedeemerHypertextColors, RedeemerHypertextColorsCSS, Classes, RedeemerFloat,
   StrUtils, Kollegah, Math, RedeemerScale, RedeemerSVGHelpers, inifiles, Types,
-  Generics.Collections;
+  Generics.Collections, RedeemerInheritablePNG, Controls;
 
 type
   TCustomUTF8Encoding = class(TUTF7Encoding)
@@ -51,9 +55,8 @@ type TCSSFont = record
 end;
 
 type TSVGContext = record
-  Transformations: TAffineTransformation;
-  LastViewport: TRealRect;
-  Dimensions: TRealPoint;
+  Transformations: TAffineTransformation; // werden von außen nach innen berechnet (Assoziativgesetz gilt), die innerste interne Transformation ist eine eigene Variable der Klasse
+  LastViewBox: TRealRect;
   Fill: TFill;
   Stroke: TStroke;
   Font: TCSSFont;
@@ -64,9 +67,7 @@ end;
 
 type TSizeCallbackEvent = procedure (const Viewport: TRealRect; var Dimensions: TRealPoint) of object;
 
-type TChunkIHDR2 = class(TChunkIHDR); // hole protected-Methode PrepareImageData
-
-type TSVGImage = class(TPNGImage)
+type TSVGImage = class(TRedeemerInheritablePNG)
   private
     procedure InitDrawing();
     procedure FinishDrawing(const Context: TSVGContext);
@@ -81,13 +82,19 @@ type TSVGImage = class(TPNGImage)
     procedure LoadPen(const Stroke: TStroke; const Context: TSVGContext);
     procedure LoadFont(const Font: TCSSFont);
     procedure DrawPoly(Context: TSVGContext; const d: string);
-    procedure HandleGroup(Context: TSVGContext); // svg, g
+    procedure HandleTag(const Context: TSVGContext; const Visible: Boolean);
+    procedure HandleGroup2(Context: TSVGContext; const FullSVG: Boolean = False); // svg, g
     procedure HandleCircle(Context: TSVGContext; const IsEllipse: Boolean);
     procedure HandleRect(Context: TSVGContext);
     procedure HandleLine(Context: TSVGContext);
     procedure HandleText(Context: TSVGContext);
     procedure HandleUse(Context: TSVGContext);
     procedure HandleDefs();
+    procedure ReadDimensions(var Dimensions: TRealPoint; const Context: TSVGContext);
+    function  ReadViewbox(var ViewBox: TRealRect): Boolean;
+    procedure ReadAspectRatio(out Align: TRealPoint; out Meet: Boolean);
+    function  ReadPosition(): TRealPoint;
+    function  MakeViewportTransformation(var Target: TAffineTransformation; const ViewBox: TRealRect; const Dimensions: TRealPoint; const Align: TRealPoint; const Meet: Boolean): TAffineTransformation;
     function  ReadStyle(var Context: TSVGContext): Boolean;
     procedure ReadFont(var Font: TCSSFont);
     procedure ReadStroke(var Stroke: TStroke);
@@ -105,7 +112,6 @@ type TSVGImage = class(TPNGImage)
       TempSupersample = 32;
       FinalSupersample = 3;
   public
-    constructor Create(); override;
     procedure LoadFromStream(Stream: TStream); override;
 end;
 
@@ -129,54 +135,52 @@ end;
 
 { TSVGImage }
 
-constructor TSVGImage.Create;
-var
-  NewIHDR: TChunkIHDR2;
-begin
-  inherited;
-  InitializeGamma;
-  BeingCreated := True;
-  Chunks.Add(TChunkIEND);
-  NewIHDR := Chunks.Add(TChunkIHDR2) as TChunkIHDR2;
-  NewIHDR.ColorType := COLOR_RGBALPHA;
-  NewIHDR.BitDepth := 8;
-  NewIHDR.Width := 1;
-  NewIHDR.Height := 1;
-  NewIHDR.PrepareImageData;
-  Chunks.Add(TChunkIDAT);
-  BeingCreated := False;
-end;
-
 procedure TSVGImage.DrawPoly(Context: TSVGContext; const d: string);
 var
   p: TPath;
   LastEndpoint, LastBezier, NextEndpoint, FirstBezier, SecondBezier: TRealPoint;
   Dummy: Extended;
-function ConditionalRelativeX(var f: Extended): Extended;
+function ConditionalRelativeX(const f: Extended): Extended;
 begin
   if AnsiChar(p.LastType) in ['a'..'z'] then
   Result := LastEndpoint.x + f
   else
   Result := f;
 end;
-function ConditionalRelativeY(var f: Extended): Extended;
+function ConditionalRelativeY(const f: Extended): Extended;
 begin
   if AnsiChar(p.LastType) in ['a'..'z'] then
   Result := LastEndpoint.y + f
   else
   Result := f;
 end;
-procedure DrawBezier(const P1, P2, P3: TRealPoint);
+procedure DrawBezier(const SecondPoint: TRealPoint);
 var
-  Points: array[0..2] of tagPOINT;
+  Points: packed array[0..2] of tagPOINT;
 begin
-  Points[0].X := Round(P1.x * TempSupersample);
-  Points[0].Y := Round(P1.y * TempSupersample);
-  Points[1].X := Round(P2.x * TempSupersample);
-  Points[1].Y := Round(P2.y * TempSupersample);
-  Points[2].X := Round(P3.x * TempSupersample);
-  Points[2].Y := Round(P3.y * TempSupersample);
+  Points[0].X := Round(FirstBezier.x * TempSupersample);
+  Points[0].Y := Round(FirstBezier.y * TempSupersample);
+  Points[1].X := Round(SecondPoint.x * TempSupersample);
+  Points[1].Y := Round(SecondPoint.y * TempSupersample);
+  Points[2].X := Round(LastEndpoint.x * TempSupersample);
+  Points[2].Y := Round(LastEndpoint.y * TempSupersample);
   PolyBezierTo(ChromaPNG.Canvas.Handle, Points, 3);
+end;
+procedure DrawLineToEndpoint();
+begin
+  LineTo(ChromaPNG.Canvas.Handle,
+         Round(LastEndpoint.x*TempSupersample),
+         Round(LastEndpoint.y*TempSupersample));
+end;
+procedure MakeAbsolute(out Target: TRealPoint; const Source: TRealPoint);
+begin
+  Target.x := ConditionalRelativeX(Source.x);
+  Target.y := ConditionalRelativeY(Source.y);
+end;
+procedure ForceGetPoint(out Point: TRealPoint);
+begin
+  if not p.GetNextNumber(Point.x) then Abort;
+  if not p.GetNextNumber(Point.y) then Abort;
 end;
 begin
   p := TPath.Create(d);
@@ -189,20 +193,14 @@ begin
       case Uppercase(p.LastType)[1] of
         // LineTo
         'L': begin
-               if not p.GetNextNumber(NextEndpoint.x) then Abort;
-               if not p.GetNextNumber(NextEndpoint.y) then Abort;
-               LastEndpoint.x := ConditionalRelativeX(NextEndpoint.x);
-               LastEndpoint.y := ConditionalRelativeY(NextEndpoint.y);
-               LineTo(ChromaPNG.Canvas.Handle,
-                 Round(LastEndpoint.x*TempSupersample),
-                 Round(LastEndpoint.y*TempSupersample));
+               ForceGetPoint(NextEndpoint);
+               MakeAbsolute(LastEndpoint, NextEndpoint);
+               DrawLineToEndpoint();
              end;
         // MoveTo
         'M': begin
-               if not p.GetNextNumber(NextEndpoint.x) then Abort;
-               if not p.GetNextNumber(NextEndpoint.y) then Abort;
-               LastEndpoint.x := ConditionalRelativeX(NextEndpoint.x);
-               LastEndpoint.y := ConditionalRelativeY(NextEndpoint.y);
+               ForceGetPoint(NextEndpoint);
+               MakeAbsolute(LastEndpoint, NextEndpoint);
                MoveToEx(ChromaPNG.Canvas.Handle,
                  Round(LastEndpoint.x*TempSupersample),
                  Round(LastEndpoint.y*TempSupersample),
@@ -212,17 +210,13 @@ begin
         'H': begin
                if not p.GetNextNumber(NextEndpoint.x) then Abort;
                LastEndpoint.x := ConditionalRelativeX(NextEndpoint.x);
-               LineTo(ChromaPNG.Canvas.Handle,
-                 Round(LastEndpoint.x*TempSupersample),
-                 Round(LastEndpoint.y*TempSupersample));
+               DrawLineToEndpoint();
              end;
         // Vertical Line To
         'V': begin
                if not p.GetNextNumber(NextEndpoint.y) then Abort;
                LastEndpoint.y := ConditionalRelativeY(NextEndpoint.y);
-               LineTo(ChromaPNG.Canvas.Handle,
-                 Round(LastEndpoint.x*TempSupersample),
-                 Round(LastEndpoint.y*TempSupersample));
+               DrawLineToEndpoint();
              end;
         // ClosePath
         'Z': CloseFigure(ChromaPNG.Canvas.Handle);
@@ -236,20 +230,14 @@ begin
                end
                else
                begin
-                 if not p.GetNextNumber(FirstBezier.x) then Abort;
-                 if not p.GetNextNumber(FirstBezier.y) then Abort;
-                 FirstBezier.x := ConditionalRelativeX(FirstBezier.x);
-                 FirstBezier.y := ConditionalRelativeY(FirstBezier.y);
+                 ForceGetPoint(FirstBezier);
+                 MakeAbsolute(FirstBezier, FirstBezier);
                end;
-               if not p.GetNextNumber(LastBezier.x) then Abort;
-               if not p.GetNextNumber(LastBezier.y) then Abort;
-               if not p.GetNextNumber(NextEndpoint.x) then Abort;
-               if not p.GetNextNumber(NextEndpoint.y) then Abort;
-               LastBezier.x := ConditionalRelativeX(LastBezier.x);
-               LastBezier.y := ConditionalRelativeY(LastBezier.y);
-               LastEndpoint.x := ConditionalRelativeX(NextEndpoint.x);
-               LastEndpoint.y := ConditionalRelativeY(NextEndpoint.y);
-               DrawBezier(FirstBezier, LastBezier, LastEndpoint);
+               ForceGetPoint(LastBezier);
+               ForceGetPoint(NextEndpoint);
+               MakeAbsolute(LastBezier, LastBezier);
+               MakeAbsolute(LastEndpoint, NextEndpoint);
+               DrawBezier(LastBezier);
              end;
         // QuadraticBézierCurveTo
         'Q', 'T': begin
@@ -261,21 +249,17 @@ begin
                end
                else
                begin
-                 if not p.GetNextNumber(FirstBezier.x) then Abort;
-                 if not p.GetNextNumber(FirstBezier.y) then Abort;
-                 LastBezier.x := ConditionalRelativeX(FirstBezier.x);
-                 LastBezier.y := ConditionalRelativeY(FirstBezier.y);
+                 ForceGetPoint(FirstBezier);
+                 MakeAbsolute(LastBezier, FirstBezier);
                end;
-               if not p.GetNextNumber(NextEndpoint.x) then Abort;
-               if not p.GetNextNumber(NextEndpoint.y) then Abort;
+               ForceGetPoint(NextEndpoint);
                // Umwandeln von quadratischer Kurve in kubische Kurve (laut deutscher Wikipedia)
                FirstBezier.x := LastEndpoint.x + 2 * (LastBezier.x - LastEndpoint.x) / 3;
                FirstBezier.y := LastEndpoint.y + 2 * (LastBezier.y - LastEndpoint.y) / 3;
-               LastEndpoint.x := ConditionalRelativeX(NextEndpoint.x);
-               LastEndpoint.y := ConditionalRelativeY(NextEndpoint.y);
+               MakeAbsolute(LastEndpoint, NextEndpoint);
                SecondBezier.x := LastEndpoint.x + 2 * (LastBezier.x - LastEndpoint.x) / 3;
                SecondBezier.y := LastEndpoint.y + 2 * (LastBezier.y - LastEndpoint.y) / 3;
-               DrawBezier(FirstBezier, SecondBezier, LastEndpoint);
+               DrawBezier(SecondBezier);
              end;
         // ArcTo (wird zu einer Geraden)
         'A': begin
@@ -284,16 +268,22 @@ begin
                if not p.GetNextNumber(Dummy) then Abort;
                if not p.GetNextNumber(Dummy) then Abort;
                if not p.GetNextNumber(Dummy) then Abort;
-               if not p.GetNextNumber(NextEndpoint.x) then Abort;
-               if not p.GetNextNumber(NextEndpoint.y) then Abort;
-               LastEndpoint.x := ConditionalRelativeX(NextEndpoint.x);
-               LastEndpoint.y := ConditionalRelativeY(NextEndpoint.y);
-               LineTo(ChromaPNG.Canvas.Handle,
-                 Round(LastEndpoint.x*TempSupersample),
-                 Round(LastEndpoint.y*TempSupersample));
+               ForceGetPoint(NextEndpoint);
+               MakeAbsolute(LastEndpoint, NextEndpoint);
+               DrawLineToEndpoint();
              end;
-        // CentripetalCatmullRomTo (führt zu Abbruch)
-        'R': Abort;
+        // CentripetalCatmullRomTo (wird zu einer Geraden)
+        'R': begin
+               while p.GetNextNumber(Dummy) do // so lange Punkte laden, bis es nicht mehr geht, dann zum vorletzten(!) Punkt eine Linie zeichnen
+               begin
+                 NextEndpoint.x := NextEndpoint.y; // speichern der letzten vier Koordinaten, damit wir am Ende auf den vorletzten Punkt zugreifen können
+                 NextEndpoint.y := LastEndPoint.x;
+                 LastEndPoint.x := LastEndpoint.y;
+                 LastEndPoint.y := Dummy;
+               end;
+               MakeAbsolute(LastEndpoint, NextEndpoint);
+               DrawLineToEndpoint();
+             end;
         // Bearing (wird ignoriert)
         'B': if not p.GetNextNumber(Dummy) then Abort;
       end;
@@ -411,19 +401,19 @@ begin
   // Koordinaten laden
   if IsEllipse then
   begin
-    if not GetOnlyValue('rx',rx,Context.LastViewport.Width) then Exit;
-    if not GetOnlyValue('ry',ry,Context.LastViewport.Height) then Exit;
+    if not GetOnlyValue('rx',rx,Context.LastViewBox.Width) then Exit;
+    if not GetOnlyValue('ry',ry,Context.LastViewBox.Height) then Exit;
   end
   else
   begin
-    if not GetOnlyValue('r',rx,(sqrt((sqr(Context.LastViewport.Width) + sqr(Context.LastViewport.Height)) / 2))) then Exit;
+    if not GetOnlyValue('r',rx,(sqrt((sqr(Context.LastViewBox.Width) + sqr(Context.LastViewBox.Height)) / 2))) then Exit;
     ry := rx;
   end;
 
   begin
     InitDrawing;
-    cx := GetOnlyValueDef('cx',Context.LastViewport.Width,0);
-    cy := GetOnlyValueDef('cy',Context.LastViewport.Height,0);
+    cx := GetOnlyValueDef('cx',Context.LastViewBox.Width,0);
+    cy := GetOnlyValueDef('cy',Context.LastViewBox.Height,0);
     Ellipse(ChromaPNG.Canvas.Handle,
       Integer(Round((cx-rx)*TempSupersample)),
       Integer(Round((cy-ry)*TempSupersample)),
@@ -448,7 +438,7 @@ begin
     Exit
     else
     if XML.CurrentTag = 'symbol' then
-    Symbols.Add(XML.GetAttributeDef('id', ''), XML.Position)
+    Symbols.AddOrSetValue(XML.GetAttributeDef('id', ''), XML.Position)
     else
     if (XML.CurrentTag = 'radialgradient') or (XML.CurrentTag = 'lineargradient') then
     NextStopName := XML.GetAttributeDef('id', '')
@@ -470,67 +460,84 @@ begin
   end;
 end;
 
-procedure TSVGImage.HandleGroup(Context: TSVGContext);
+procedure TSVGImage.HandleGroup2(Context: TSVGContext; const FullSVG: Boolean = False);
 var
-  d, CancelTag: string;
-  Draw, IsEmpty: Boolean;
+  EndTag: string;
+  Dimensions, Align: TRealPoint;
+  Visible, Meet: Boolean;
 begin
-  // Behandelt zur Not auch Anderes
-  Draw := ReadStyle(Context);
-  CancelTag := '/' + XML.CurrentTag;
-  IsEmpty := XML.IsSelfClosing();
+  EndTag := '/' + XML.CurrentTag;
+  Visible := ReadStyle(Context);
+  if FullSVG then
+  begin
+    ReadDimensions(Dimensions, Context);
+    ReadAspectRatio(Align, Meet);
+    if ReadViewbox(Context.LastViewBox) then
+    MakeViewportTransformation(Context.Transformations, Context.LastViewBox, Dimensions, Align, Meet);
+    with ReadPosition do
+    Context.Transformations := AffineTransformation(AffineTranslation(x,y), Context.Transformations);
+  end;
   while XML.GoToAndGetNextTag do
   begin
-    // Gruppen müssen bearbeitet werden, damit die Sichtbarkeit korrekt für alle Unterelement gilt, Rest nicht
-    if XML.CurrentTag = CancelTag then
+    if XML.CurrentTag = EndTag then
     Exit
     else
-    if XML.CurrentTag = 'g' then
-    HandleGroup(Context)
-    else
-    if XML.CurrentTag = 'defs' then
-    HandleDefs()
-    else
-    // falls gezeichnet werden muss, bearbeite sichtbare Objekte
-    if Draw then
-    if XML.CurrentTag = 'use' then
-    HandleUse(Context)
-    else
-    if XML.CurrentTag = 'rect' then
-    HandleRect(Context)
-    else
-    if XML.CurrentTag = 'circle' then
-    HandleCircle(Context, False)
-    else
-    if XML.CurrentTag = 'ellipse' then
-    HandleCircle(Context, True)
-    else
-    if XML.CurrentTag = 'line' then
-    HandleLine(Context)
-    else
-    if XML.CurrentTag = 'polyline' then
-    begin
-      if XML.GetAttribute('points', d) then
-      DrawPoly(Context, 'M' + d);
-    end
-    else
-    if XML.CurrentTag = 'polygon' then
-    begin
-      if XML.GetAttribute('points', d) then
-      DrawPoly(Context, 'M' + d + 'Z');
-    end
-    else
-    if XML.CurrentTag = 'path' then
-    begin
-      if XML.GetAttribute(string('d'), d) then // Ob er behindert ist, hab ich gefragt!?
-      DrawPoly(Context, d);
-    end
-    else
-    if XML.CurrentTag = 'text' then
-    HandleText(Context);
-    if IsEmpty then
-    Exit;
+    HandleTag(Context, Visible);
   end;
+end;
+
+procedure TSVGImage.HandleTag(const Context: TSVGContext; const Visible: Boolean);
+var
+  d: string;
+begin
+  // Diese Methode entscheidet je nach Tag, welche Behandlungsroutine aufgerufen werden muss
+  // Gruppen müssen immer bearbeitet werden, damit jedes Element einmal bearbeitet wird
+  if (XML.CurrentTag = 'g') or (XML.CurrentTag = 'symbol') then
+  HandleGroup2(Context)
+  else
+  if XML.CurrentTag = 'defs' then
+  HandleDefs()
+  else
+  if XML.CurrentTag = 'use' then
+  HandleUse(Context)
+  else
+  if XML.CurrentTag = 'svg' then
+  HandleGroup2(Context, True)
+  else
+  // falls gezeichnet werden muss, bearbeite sichtbare Objekte, die keine (zu iterierenden) Kinder haben werden
+  if Visible then
+  if XML.CurrentTag = 'rect' then
+  HandleRect(Context)
+  else
+  if XML.CurrentTag = 'circle' then
+  HandleCircle(Context, False)
+  else
+  if XML.CurrentTag = 'ellipse' then
+  HandleCircle(Context, True)
+  else
+  if XML.CurrentTag = 'line' then
+  HandleLine(Context)
+  else
+  if XML.CurrentTag = 'polyline' then
+  begin
+    if XML.GetAttribute('points', d) then
+    DrawPoly(Context, 'M' + d);
+  end
+  else
+  if XML.CurrentTag = 'polygon' then
+  begin
+    if XML.GetAttribute('points', d) then
+    DrawPoly(Context, 'M' + d + 'Z');
+  end
+  else
+  if XML.CurrentTag = 'path' then
+  begin
+    if XML.GetAttribute(string('d'), d) then // wird ohne die sinnlose Typumwandlung manchmal aus irgendwelchen Gründen angekreidet
+    DrawPoly(Context, d);
+  end
+  else
+  if XML.CurrentTag = 'text' then
+  HandleText(Context);
 end;
 
 procedure TSVGImage.HandleLine(Context: TSVGContext);
@@ -538,33 +545,42 @@ begin
   if not ReadStyle(Context) then Exit;
   InitDrawing;
   MoveToEx(ChromaPNG.Canvas.Handle,
-    Round(GetOnlyValueDef('x1',Context.LastViewport.Width,0)*TempSupersample),
-    Round(GetOnlyValueDef('y1',Context.LastViewport.Height,0)*TempSupersample),
+    Round(GetOnlyValueDef('x1',Context.LastViewBox.Width,0)*TempSupersample),
+    Round(GetOnlyValueDef('y1',Context.LastViewBox.Height,0)*TempSupersample),
     nil);
   LineTo(ChromaPNG.Canvas.Handle,
-    Round(GetOnlyValueDef('x2',Context.LastViewport.Width,0)*TempSupersample),
-    Round(GetOnlyValueDef('y2',Context.LastViewport.Height,0)*TempSupersample));
+    Round(GetOnlyValueDef('x2',Context.LastViewBox.Width,0)*TempSupersample),
+    Round(GetOnlyValueDef('y2',Context.LastViewBox.Height,0)*TempSupersample));
   FinishDrawing(Context);
 end;
 
 procedure TSVGImage.HandleRect(Context: TSVGContext);
 var
-  x,y,h,w: Extended;
+  x,y,h,w,rx,ry: Extended;
 begin
   if not ReadStyle(Context) then Exit;
-  if GetOnlyValue('width',w,Context.LastViewport.Width) then
-  if GetOnlyValue('height',h,Context.LastViewport.Height) then
+  if GetOnlyValue('width',w,Context.LastViewBox.Width) then
+  if GetOnlyValue('height',h,Context.LastViewBox.Height) then
   begin
     InitDrawing;
-    x := GetOnlyValueDef('x',Context.LastViewport.Width,0);
-    y := GetOnlyValueDef('y',Context.LastViewport.Height,0);
+    x := GetOnlyValueDef('x',Context.LastViewBox.Width,0);
+    y := GetOnlyValueDef('y',Context.LastViewBox.Height,0);
+    // Wird nur ein Rundungs-Wert angegeben, erhält der andere dessen Wert - inklusive der Bezugsnorm für Prozentangaben!
+    if GetOnlyValue('rx',rx,Context.LastViewBox.Width) then
+    ry := GetOnlyValueDef('ry',Context.LastViewBox.Height,rx)
+    else
+    begin
+      ry := GetOnlyValueDef('ry',Context.LastViewBox.Height,0);
+      rx := ry;
+    end;
+
     RoundRect(ChromaPNG.Canvas.Handle,
       Integer(Round(x*TempSupersample)),
       Integer(Round(y*TempSupersample)),
       Integer(Round((x+w)*TempSupersample)),
       Integer(Round((y+h)*TempSupersample)),
-      Integer(Round(GetOnlyValueDef('rx',Context.LastViewport.Width,0)*2*TempSupersample)),
-      Integer(Round(GetOnlyValueDef('ry',Context.LastViewport.Height,0)*2*TempSupersample))
+      Integer(Round(rx*2*TempSupersample)), // GDI benutzt den Durchmesser, SVG den Radius
+      Integer(Round(ry*2*TempSupersample))
     );
     FinishDrawing(Context);
   end;
@@ -605,7 +621,7 @@ begin
 
       // Einzelteile rendern
       i := 0;
-      while x.GetNextCoordinate(Context.LastViewport.Width, x2) do
+      while x.GetNextCoordinate(Context.LastViewBox.Width, x2) do
       begin
         inc(i);
         if i < count then
@@ -615,7 +631,7 @@ begin
         end
         else
         s2 := s;
-        y.GetNextCoordinate(Context.LastViewport.Height, y2); // wenn nicht, dann halt nicht (bleibt unverändert)
+        y.GetNextCoordinate(Context.LastViewBox.Height, y2); // wenn nicht, dann halt nicht (bleibt unverändert)
         ExtTextOut(ChromaPNG.Canvas.Handle, Integer(Round(x2*TempSupersample)), Integer(Round(y2*TempSupersample)), 0, nil, PChar(s2), Length(s2), nil);
       end;
       FinishDrawing(Context);
@@ -628,24 +644,47 @@ end;
 
 procedure TSVGImage.HandleUse(Context: TSVGContext);
 var
-  OldPos, NewPos: Integer;
+  OldPos, NewPos, StackIndex: Integer;
   s: string;
+  Dimensions, Align, Position: TRealPoint;
+  Meet: Boolean;
 begin
-  ReadStyle(Context); // Eigenschaften des aufrufenden use-Tags lesen
+  // Eigenschaften des aufrufenden use-Tags lesen
+  ReadStyle(Context);
+
   OldPos := XML.Position;
   if XML.GetAttribute('xlink:href', s) then
   if GetURLRef(s, Symbols, NewPos) then
-  if not Recalls.Contains(s) then
+  if not Recalls.Contains(s) then // Endlosschleife verhindern
   try
+    // Viewbox-relevante Daten aus use-Tag lesen
+    ReadDimensions(Dimensions, Context); // wird verworfen, wenn es keine Viewbox gibt
+    Position := ReadPosition;
+
+    // Zu Definition springen
     XML.Position := NewPos;
-    NewPos := Recalls.Add(s);
-    XML.LoadTagName;
-    XML.LoadAttributes;
-    HandleGroup(Context);
-    Recalls.Delete(NewPos);
+    StackIndex := Recalls.Add(s);
+    XML.LoadTagName();
+    XML.LoadAttributes();
+
+    // Tag der Definition bearbeiten
+    if XML.CurrentTag = 'symbol' then
+    begin
+      // Viewbox-relevante Daten aus symbol-Tag lesen
+      ReadAspectRatio(Align, Meet);
+      if ReadViewbox(Context.LastViewBox) then
+      MakeViewportTransformation(Context.Transformations, Context.LastViewBox, Dimensions, Align, Meet);
+    end;
+    // In jedem Fall kann aber x und y angewendet werden
+    // Dies wird eigentlich VOR der Translation (oben in ReadStyle geladen) angewandt,
+    // aber durch die Schachtelbarkeit von Elementen berechnet RedeemerSVG Transformationen von außen nach innen (Assoziativgesetz)
+    Context.Transformations := AffineTransformation(AffineTranslation(Position.x,Position.y), Context.Transformations);
+
+    HandleTag(Context, True);
+    Recalls.Delete(StackIndex);
   finally
     XML.Position := OldPos;
-    //XML.LoadAttributes;
+    //XML.LoadAttributes und XML.LoadTagName nicht nötig, da auf Tag-Name und Attribute nicht mehr zugegriffen wird (übergeordnete Schleife springt sofort zum nächsten Tag)
   end;
 end;
 
@@ -672,11 +711,11 @@ procedure TSVGImage.LoadFromStream(Stream: TStream);
 var
   sl: TStringList;
   Context: TSVGContext;
-  Value: string;
-  haswidth, hasheight: Boolean;
-  Coords: TCoordinates;
-  Scale: Extended;
+  Meet: Boolean;
   Encoding: TCustomUTF8Encoding;
+  Align, Dimensions: TRealPoint;
+  StartPos: Integer;
+  ID: string;
 begin
   sl := TStringList.Create;
   Encoding := TCustomUTF8Encoding.Create;
@@ -695,35 +734,16 @@ begin
     if XML.CurrentTag = 'svg' then
     begin
       // Erstmal Größe lesen
-      hasWidth := GetOnlyValue('width', Context.Dimensions.x);
-      if not haswidth then
-      Context.Dimensions.x := 300;
-      hasHeight := GetOnlyValue('height', Context.Dimensions.y);
-      if not hasheight then
-      Context.Dimensions.y := 300;
-
-      if XML.GetAttribute('viewbox', Value) then
-      begin
-        Coords := TCoordinates.Create(Value);
-        try
-          Coords.GetNextCoordinate(Context.LastViewport.Left);
-          Coords.GetNextCoordinate(Context.LastViewport.Top);
-          Coords.GetNextCoordinate(Context.LastViewport.Width);
-          Coords.GetNextCoordinate(Context.LastViewport.Height);
-          if not haswidth then
-          Context.Dimensions.x := Context.LastViewport.Width;
-          if not hasheight then
-          Context.Dimensions.y := Context.LastViewport.Height;
-        finally
-          Coords.Free;
-        end;
-      end
-      else
-      Context.LastViewport := RealRect(0,0,Context.Dimensions.x,Context.Dimensions.y);
+      Context.LastViewBox := RealRect(0, 0, 300, 300);
+      //ReadPosition;
+      ReadAspectRatio(Align, Meet);
+      ReadViewbox(Context.LastViewBox);
+      ReadDimensions(Dimensions, Context);
+      //Context.LastViewBox := RealRect(0,0,Dimensions.x,Dimensions.y);
 
       // Größe vom Benutzer bestätigen lassen
       if Assigned(SizeCallback) then
-      SizeCallback(Context.LastViewport, Context.Dimensions);
+      SizeCallback(Context.LastViewBox, Dimensions);
 
       // Restlichen Kontext initialisieren
       Context.Fill.Rule := WINDING;
@@ -742,30 +762,34 @@ begin
       Context.Opacity := 1;
       Context.Display := True;
       Context.PaintOrderStroke := False;
-      // Standard-Bosstransformation
+      // Standard-Bosstransformation: temporäres Supersampling rückgängig machen, Koordinatensystem umwandeln
       InnerTransformation := AffineScale(1 / TempSupersample, 1 / TempSupersample);
-      Context.Transformations := AffineTransformation(FinalSupersample, 0, 0, FinalSupersample, -0.5 - Context.LastViewport.Left * FinalSupersample, -0.5 - Context.LastViewport.Top * FinalSupersample);
+      Context.Transformations := AffineTransformation(FinalSupersample, 0, 0, FinalSupersample, -0.5, -0.5);
 
       // Transformation in den richtigen Zeichenbereich
-      Scale := Min(Context.Dimensions.x / Context.LastViewport.Width, Context.Dimensions.y / Context.LastViewport.Height);
-      Context.Transformations := AffineTransformation(Context.Transformations,
-                                 AffineTransformation(Scale, 0, 0, Scale,
-                                 (Context.Dimensions.x - Context.LastViewport.Width * Scale) / 2,
-                                 (Context.Dimensions.y - Context.LastViewport.Height * Scale) / 2));
+      MakeViewportTransformation(Context.Transformations, Context.LastViewBox, Dimensions, Align, Meet); // keine Position im Wurzel-Tag
 
       // Zeichenflächen initialisieren (ursprünglicher Join-Algorithmus hatte RGB bei Opacity, war das für Rastergrafiken nötig?)
-      ChromaPNG := TPngImage.CreateBlank(COLOR_RGB, 8, Round(Context.Dimensions.x) * FinalSupersample, Round(Context.Dimensions.y) * FinalSupersample);
-      OpacityPNG := TPngImage.CreateBlank(COLOR_GRAYSCALE, 8, Round(Context.Dimensions.x) * FinalSupersample, Round(Context.Dimensions.y) * FinalSupersample);
+      ChromaPNG := TPngImage.CreateBlank(COLOR_RGB, 8, Round(Dimensions.x) * FinalSupersample, Round(Dimensions.y) * FinalSupersample);
+      OpacityPNG := TPngImage.CreateBlank(COLOR_GRAYSCALE, 8, Round(Dimensions.x) * FinalSupersample, Round(Dimensions.y) * FinalSupersample);
 
-      // Start des Dekodings
-      HandleGroup(Context);
+      // Definitionen laden
+      StartPos := XML.Position;
+      while XML.GoToAndGetNextTag do
+      if XML.GetAttribute('id', ID) then
+      Symbols.Add(ID, XML.Position);
+
+      // Reset
+      XML.Position := StartPos;
+      XML.Done := False;
+      XML.LoadTagName;
+      HandleGroup2(Context);
 
       // Zusammenlegen der Bilder
-      //inherited CreateBlank(COLOR_RGBALPHA, 8, Round(Context.Dimensions.x), Round(Context.Dimensions.y));
-      inherited SetSize(Round(Context.Dimensions.x), Round(Context.Dimensions.y));
+      InitBlankNonPaletteImage(COLOR_RGBALPHA, 8, Round(Dimensions.x), Round(Dimensions.y));
       JoinAndDownscale(ChromaPNG, OpacityPNG, self, True);
 
-      Exit; // nur erstes <svg> in der Wurzel bearbeiten (gäbe sonst auch Memory-Leak)
+      Exit; // nur erstes <svg> in der Wurzel bearbeiten
     end;
   finally
     XML.Free;
@@ -794,7 +818,7 @@ var
   Width: Integer;
   Brush: tagLOGBRUSH;
   Dashes: TCoordinates;
-  DashData: array of DWord;
+  DashData: packed array of DWord;
   f, PercentageScale, Scale: Extended;
   Miter: Single;
 begin
@@ -803,7 +827,7 @@ begin
   else
   Flags := PS_SOLID;
 
-  PercentageScale := sqrt((sqr(Context.LastViewport.Width) + sqr(Context.LastViewport.Height)) / 2);
+  PercentageScale := sqrt((sqr(Context.LastViewBox.Width) + sqr(Context.LastViewBox.Height)) / 2);
   Scale := sqrt((sqr(Context.Transformations.a)+sqr(Context.Transformations.b)+sqr(Context.Transformations.c)+sqr(Context.Transformations.d))/2);
 
   if Flags <> PS_NULL then
@@ -812,7 +836,6 @@ begin
     if Stroke.DashArray <> 'none' then
     begin
       Dashes := TCoordinates.Create(Stroke.DashArray);
-      SetLength(DashData, 0);
       try
         while Dashes.GetNextCoordinate(PercentageScale, f) do
         begin
@@ -846,6 +869,62 @@ begin
   DeleteObject(OpacityPNG.Canvas.Pen.Handle);
   OpacityPNG.Canvas.Pen.Handle := ExtCreatePen(PS_GEOMETRIC or Flags or Stroke.Linecap or Stroke.Linejoin, Width, Brush, Length(DashData), DashData);
   SetMiterLimit(OpacityPNG.Canvas.Handle, Miter, nil);
+end;
+
+function TSVGImage.MakeViewportTransformation(var Target: TAffineTransformation; const ViewBox: TRealRect; const Dimensions: TRealPoint; const Align: TRealPoint; const Meet: Boolean): TAffineTransformation;
+var
+  Scale: Extended;
+begin
+  if Align.x = -1 then
+  Target := AffineTransformation(
+            AffineScale(Dimensions.x / ViewBox.Width, Dimensions.y / ViewBox.Height),
+            Target)
+  else
+  begin
+  if Meet then
+  Scale := Min(Dimensions.x / ViewBox.Width, Dimensions.y / ViewBox.Height)
+  else
+  Scale := Max(Dimensions.x / ViewBox.Width, Dimensions.y / ViewBox.Height);
+  Target := AffineTransformation(
+            AffineTransformation(Scale, 0, 0, Scale,
+            (Dimensions.x - ViewBox.Width * Scale) * Align.x,
+            (Dimensions.y - ViewBox.Height * Scale) * Align.y),
+            Target);
+  end;
+  Target := AffineTransformation(AffineTranslation(-ViewBox.Left, -ViewBox.Top), Target);
+end;
+
+procedure TSVGImage.ReadAspectRatio(out Align: TRealPoint; out Meet: Boolean);
+var
+  Splitter: TStyleSplitter;
+begin
+  Align := RealPoint(0.5, 0.5); // Align gibt die Position im Rechteck in Anteilen an (oder x=-1 bei none)
+  Meet := True;
+  Splitter := TStyleSplitter.Create(XML.GetAttribute('preserveAspectRatio'), True);
+  try
+    if Length(Splitter.Values) >= 1 then
+    begin
+      if Splitter.Values[0] = 'none' then Align := RealPoint(-1,0) else
+      if Splitter.Values[0] = 'xMinYMin' then Align := RealPoint(0, 0) else
+      if Splitter.Values[0] = 'xMidYMin' then Align := RealPoint(0.5, 0) else
+      if Splitter.Values[0] = 'xMaxYMin' then Align := RealPoint(1, 0) else
+      if Splitter.Values[0] = 'xMinYMid' then Align := RealPoint(0, 0.5) else
+      if Splitter.Values[0] = 'xMaxYMid' then Align := RealPoint(1, 0.5) else
+      if Splitter.Values[0] = 'xMinYMax' then Align := RealPoint(0, 1) else
+      if Splitter.Values[0] = 'xMidYMax' then Align := RealPoint(0.5, 1) else
+      if Splitter.Values[0] = 'xMaxYMax' then Align := RealPoint(0, 1);
+      if Length(Splitter.Values) >= 2 then
+      Meet := Splitter.Values[1] <> 'slice';
+    end;
+  finally
+    Splitter.Free;
+  end;
+end;
+
+procedure TSVGImage.ReadDimensions(var Dimensions: TRealPoint; const Context: TSVGContext);
+begin
+  Dimensions.x := GetOnlyValueDef('width', Context.LastViewBox.Width, Context.LastViewBox.Width);
+  Dimensions.y := GetOnlyValueDef('height', Context.LastViewBox.Height, Context.LastViewBox.Height);
 end;
 
 procedure TSVGImage.ReadFill(var Fill: TFill);
@@ -918,7 +997,7 @@ begin
       end;
       if Success then Break;
     end;
-
+    fonts.Free;
   end;
 
   // Schriftgröße, % bezieht sich auf die vorherige Einstellung
@@ -942,6 +1021,12 @@ begin
   else
   if (s = 'normal') or (s = 'lighter') or (s = 'light') or (s = '100') or (s = '200') or (s = '300') or (s = '400') or (s = '500') then
   Font.Weight := False;
+end;
+
+function TSVGImage.ReadPosition: TRealPoint;
+begin
+  Result.x := GetOnlyValueDef('x', 0);
+  Result.y := GetOnlyValueDef('y', 0);
 end;
 
 procedure TSVGImage.ReadStroke(var Stroke: TStroke);
@@ -1012,10 +1097,10 @@ var
 begin
   Result := False;
 
-  if XML.CurrentTag = 'g' then
-  if XML.GetAttribute('id', s) then
+  //if XML.CurrentTag = 'g' then
+  {if XML.GetAttribute('id', s) then
   if not Symbols.ContainsKey(s) then
-  Symbols.Add(s, XML.Position);
+  Symbols.Add(s, XML.Position);}
 
   // Sichtbarkeit laden, ggf. abbrechen, da display auch das Zeichnen aller Kinder verhindert
   if not Context.Display then Exit;
@@ -1028,7 +1113,7 @@ begin
     // Deckfähigkeit (wird entweder als transparent oder nicht interpretiert)
     if GetProperty('opacity', True, True, s) then
     if TCoordinates.GetOnlyValue(s, x1) then
-    Context.Opacity := Context.Opacity * x1;
+    Context.Opacity := Context.Opacity * x1; // berechnet sich anders als Füllungs- und Konturendeckkraft relativ
     Context.Display := not (Context.Opacity < 0.2);
     if not Context.Display then Exit;
 
@@ -1106,6 +1191,29 @@ begin
     Result := True;
   finally
     CurrentStyle.Free;
+  end;
+end;
+
+function TSVGImage.ReadViewbox(var ViewBox: TRealRect): Boolean;
+var
+  Coords: TCoordinates;
+  Value: string;
+  TempViewbox: TRealRect;
+begin
+  Result := XML.GetAttribute('viewbox', Value);
+  if Result then
+  begin
+    Coords := TCoordinates.Create(Value);
+    try
+      Result := Coords.GetNextCoordinate(TempViewbox.Left) and
+                Coords.GetNextCoordinate(TempViewbox.Top) and
+                Coords.GetNextCoordinate(TempViewbox.Width) and
+                Coords.GetNextCoordinate(TempViewbox.Height);
+      if Result then
+      ViewBox := TempViewbox; // nur setzen, wenn vollständig geladen
+    finally
+      Coords.Free;
+    end;
   end;
 end;
 

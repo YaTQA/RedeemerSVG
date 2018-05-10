@@ -18,14 +18,16 @@ type
 function RealPoint(const x,y: Extended): TRealPoint;
 function AffineTransformation(const a,b,c,d: Extended; const e: Extended = 0; const f: Extended = 0): TAffineTransformation; overload;
 function AffineTransformation(const Inner,Outer: TAffineTransformation): TAffineTransformation; overload;
-function AffineTransformation(const Transformation: TAffineTransformation; Vector: TRealPoint): TRealPoint; overload;
-function AffineTransformation(const Transformation: TAffineTransformation; Vector: TPoint): TPoint; overload;
+function AffineTransformation(const Transformation: TAffineTransformation; const Vector: TRealPoint): TRealPoint; overload;
+function AffineTransformation(const Transformation: TAffineTransformation; const Vector: TPoint): TPoint; overload;
 function AffineTranslation(const x,y: Extended): TAffineTransformation;
 function AffineRotation(const alpha: Extended): TAffineTransformation; overload;
 function AffineRotation(const alpha,x,y: Extended): TAffineTransformation; overload;
 function AffineScale(const x,y: Extended): TAffineTransformation;
 function AffineSkewX(const x: Extended): TAffineTransformation;
 function AffineSkewY(const y: Extended): TAffineTransformation;
+//procedure AffineTranslateTransformation(var Inner: TAffineTransformation; const Outer: TRealPoint);
+function AffineInverse(const Transformation: TAffineTransformation; out Inverse: TAffineTransformation): Boolean;
 
 implementation
 
@@ -55,13 +57,13 @@ begin
   Result.f := Outer.b*Inner.e + Outer.d*Inner.f + Outer.f;
 end;
 
-function AffineTransformation(const Transformation: TAffineTransformation; Vector: TRealPoint): TRealPoint;
+function AffineTransformation(const Transformation: TAffineTransformation; const Vector: TRealPoint): TRealPoint;
 begin
   Result.x := Transformation.a*Vector.x + Transformation.c*Vector.x + Transformation.e;
   Result.y := Transformation.b*Vector.y + Transformation.d*Vector.y + Transformation.f;
 end;
 
-function AffineTransformation(const Transformation: TAffineTransformation; Vector: TPoint): TPoint;
+function AffineTransformation(const Transformation: TAffineTransformation; const Vector: TPoint): TPoint;
 begin
   Result.x := Round(Transformation.a*Vector.x + Transformation.c*Vector.y + Transformation.e);
   Result.y := Round(Transformation.b*Vector.x + Transformation.d*Vector.y + Transformation.f);
@@ -111,6 +113,30 @@ var
 begin
   rad := y / 180 * Pi;
   Result := AffineTransformation(1, Tan(rad), 0, 1);
+end;
+
+{procedure AffineTranslateTransformation(var Inner: TAffineTransformation; const Outer: TRealPoint);
+begin
+  Inner.e := Inner.e + Outer.x;
+  Inner.f := Inner.f + Outer.y;
+end;}
+
+function AffineInverse(const Transformation: TAffineTransformation; out Inverse: TAffineTransformation): Boolean;
+var
+  Determinant: Extended;
+begin
+  Determinant := Transformation.a * Transformation.d - Transformation.b * Transformation.c;
+  Result := Determinant <> 0;
+  if not Result then Exit;
+  Inverse := AffineTransformation(Transformation.d / Determinant,
+                                  -Transformation.b / Determinant,
+                                  -Transformation.c / Determinant,
+                                  Transformation.a / Determinant);
+  with AffineTransformation(Inverse, RealPoint(Transformation.e, Transformation.f)) do
+  begin
+    Inverse.e := -x;
+    Inverse.f := -y;
+  end;
 end;
 
 end.

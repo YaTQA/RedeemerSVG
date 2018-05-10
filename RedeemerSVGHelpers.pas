@@ -10,7 +10,7 @@ type TStyle = class
     var
       Properties: TDictionary<string, string>;
   public
-    constructor Create(const S: string);
+    constructor Create(const Style: string);
     destructor Destroy; override;
     function GetProperty(const Attribute: string; out Value: string): Boolean;
 end;
@@ -75,7 +75,6 @@ var
   temp: string;
   Factor: Extended;
 begin
-  temp := '';
   Result := False;
   ResetNumber();
   if Position <= L then
@@ -220,7 +219,6 @@ function TPath.GetNextNumber(out Value: Extended): Boolean;
 var
   temp: string;
 begin
-  temp := '';
   LastWasRepeat := False;
   ResetNumber();
   try
@@ -264,46 +262,65 @@ end;
 
 { TStyle }
 
-constructor TStyle.Create(const S: string);
+constructor TStyle.Create(const Style: string);
 var
   Temp: string;
   Temp2: string;
   Escaping: (esNone = -1, esSingle = $27, esDouble = $22);
   i: Integer;
+  S: string;
+  Importants: TList<string>;
 begin
   Properties := Generics.Collections.TDictionary<string,string>.Create();
-  Escaping := esNone;
-  for i := 1 to Length(s) do
-  if Escaping <> esNone then
-  if Ord(s[i]) = Integer(Escaping) then
-  begin
+  Importants := TList<string>.Create();
+  try
     Escaping := esNone;
-    Temp := Temp + s[i];
-  end
-  else
-  Temp := Temp + s[i]
-  else
-  case Ord(s[i]) of
-    58: begin
-          Temp2 := Temp;
-          Temp := '';
-        end;
-    59: begin
-          Properties.Add(trim(Temp2), Trim(Temp));
-          Temp := '';
-        end;
-    $22: begin
-           Escaping := esDouble;
-           Temp := Temp + s[i];
-         end;
-    $27: begin
-           Escaping := esSingle;
-           Temp := Temp + s[i];
-         end;
-    else Temp := Temp + s[i];
+    S := Style + ';';
+    for i := 1 to Length(s) do
+    if Escaping <> esNone then
+    if Ord(s[i]) = Integer(Escaping) then
+    begin
+      Escaping := esNone;
+      Temp := Temp + s[i];
+    end
+    else
+    Temp := Temp + s[i]
+    else
+    case Ord(s[i]) of
+      58: begin
+            Temp2 := Temp;
+            Temp := '';
+          end;
+      59: begin
+            Temp2 := Trim(Temp2);
+            Temp := Trim(Temp);
+            if EndsText('!important', Temp) then // ist !important (darf nicht durch nicht !important-Eigenschaften gesetzt werden)
+            begin
+              Properties.AddOrSetValue(Temp2, Trim(Copy(Temp, 1, Length(Temp) - 10))); // Attribut ohne !important aufnehmen
+              if not Importants.Contains(Temp2) then
+              begin
+                Importants.Add(Temp2); // Attributname wird aufgenommen
+              end;
+            end
+            else
+            if not Importants.Contains(Temp2) then
+            Properties.AddOrSetValue(Temp2, Temp);
+            Temp := '';
+            Temp2 := '';
+          end;
+      $22: begin
+             Escaping := esDouble;
+             Temp := Temp + s[i];
+           end;
+      $27: begin
+             Escaping := esSingle;
+             Temp := Temp + s[i];
+           end;
+      else Temp := Temp + s[i];
+    end;
+  finally
+    Importants.Free;
   end;
-  if Temp <> '' then
-  Properties.Add(trim(Temp2), Trim(Temp));
 end;
 
 destructor TStyle.Destroy;
@@ -328,7 +345,6 @@ var
   Escaping: (esNone, esSingle, esDouble, esBracket);
 begin
   InStyle := False;
-  SetLength(Values, 0);
   Escaping := esNone;
   for i := 1 to Length(S) do
   if (((S[i] = #32) and SplitAtSpace) or (S[i] = ',')) and (Escaping = esNone) then
