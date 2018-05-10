@@ -1,7 +1,7 @@
-v0.1-alpha
+v0.1-alpha (23 Aug 2017)
 - Erste Veröffentlichung
 
-v0.2-alpha
+v0.2-alpha (26 Aug 2017)
 - Ein Fehler wurde behoben, durch den die wissenschaftliche e-Schreibweise nur bei Komma-, aber nicht bei Ganzzahlen funktionierte.
 - Bei größeren Dateien ist die Klasse jetzt etwa 50 bis mehrere hundert Mal schneller (StrUtils.MidStr und StrUtils.LeftStr der Hurensohn).
 - Eine mögliche Endlosschleife wurde behoben, falls nach einem Kommentar nicht sofort ein Tag kam.
@@ -12,11 +12,28 @@ v0.2-alpha
 - Es wurde eine Liste hinzugefügt, die die use-Referenzen speichert, die derzeit verarbeitet werden, sodass Rekursion verhindert wird (ein use-Tag kann sich nicht mehr selbst aufrufen).
 - Das Memory-Management beim Erstellen wurde geändert, Create erstellt jetzt bereits ein 1x1 großes leeres Bild.
 
-v0.2b-alpha
+v0.2b-alpha (01 Sep 2017)
 - Ungenutzte Variable entfernt
 - Ungültiges UTF-8 führt nicht mehr zu einem Abbruch
 - Create() nach public verschoben und reintroduce-Flag gesetzt
 
-Geplant für: v0.3
-- SameText überall nutzen
-- Create-Methoden der Hilfsklassen nach public verschieben
+v0.3-alpha (10 Sep 2017)
+- Umstellung aller relevanten internen Methoden beim Lesen von Kommazahlen von Integer auf Int64 (außer der Exponent)
+- Wissenschaftliche e-Schreibweise jetzt auch für negative Exponenten
+- Wissenschaftliche e-Schreibweise wird nun auch beim path-Element unterstützt
+- Kleinere Performance-Verbesserungen
+- Falsche Positionierung von nicht links ausgerichtetem Text korrigiert
+- Attributwerte können (wieder?) in einfachen Anführungszeichen stehen
+- Unterstützung für selbstschließende Tags
+- Referenzierung von anderen Elementen als Gruppen und Symbole mit use hinzugefügt
+- constructor-Methoden der Hilfsklassen nach public verschoben
+- stroke/fill-opacity<0,2 als transparent interpretiert
+- Bug mit nicht klein komplett geschriebenen Attributen behoben
+- Ignorieren der Groß- und Kleinschreibung von Tags verbessert
+- Unterstützung für Stil-Eigenschaft Gehrungsgrenze (stroke-miterlimit) hinzugefügt
+- Speicherlecks geschlossen
+- Berechnete gesamte opacity<0,2 als transparent interpretiert
+- Workaround für Initialisierung mittels TGraphicClass.Create hinzugefügt
+
+Geplant für: v0.4-beta
+- Unterstützung von svg, symbol und use entsprechend der als Ziel festgelegten Unterstützung

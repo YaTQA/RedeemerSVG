@@ -2201,10 +2201,10 @@ begin
     if s[i] = '&' then
     begin
       inc(i);
-      s2 := MidStr(s, i, 32);
+      s2 := Copy(s, i, 32);
       if StartsStr('#', s2) then
       begin
-        s2 := MidStr(s, i + 1, PosEx(';', s, i) - i - 1);
+        s2 := Copy(s, i + 1, PosEx(';', s, i) - i - 1);
         if TryStrToInt(s2, k) then // Unterstützt netterweise Hex-Strings
         Result := Result + UCS4Chr(k)
         else

@@ -6,25 +6,24 @@ uses
   Generics.Collections;
 
 type TStyle = class
-  constructor Create(const S: string);
-  destructor Destroy; override;
   private
     var
       Properties: TDictionary<string, string>;
   public
+    constructor Create(const S: string);
+    destructor Destroy; override;
     function GetProperty(const Attribute: string; out Value: string): Boolean;
 end;
 
 type TStyleSplitter = class // Klasse zum Splitten von einzelnen Bestandteilen von CSS-Werten (vor allem Schriftarten und Transformationen)
-  constructor Create(const S: string; const SplitAtSpace: Boolean);
   public
+    constructor Create(const S: string; const SplitAtSpace: Boolean);
     class function GetBracket(const S: string; out Name: string; out Value: string): Boolean;
     var
       Values: array of string;
 end;
 
 type TCoordinates = class
-  constructor Create(const S: string);
   private
     procedure ResetNumber();
     function IsNumber: Boolean;
@@ -34,7 +33,9 @@ type TCoordinates = class
     L: Integer;
     CanDecimal: Boolean;
     CanMinus: Boolean;
+    CanExponent: Boolean;
   public
+    constructor Create(const S: string);
     class function MakeAbsolute(const PercentageMeasure: Extended; const Value: Extended): Extended;
     class function GetOnlyValue(const s: string; out Value: Extended): Boolean; overload;
     class function GetOnlyValue(const s: string; out Value: Extended; const PercentageMeasure: Extended): Boolean; overload;
@@ -187,6 +188,12 @@ begin
           CanMinus := False;
           CanDecimal := False;
         end;
+    101: begin // e
+           Result := CanExponent;
+           CanMinus := True;
+           CanDecimal := False;
+           CanExponent := False;
+         end;
     else Result := False;
   end;
 end;
@@ -204,6 +211,7 @@ procedure TCoordinates.ResetNumber;
 begin
   CanDecimal := True;
   CanMinus := True;
+  CanExponent := True;
 end;
 
 { TPath }

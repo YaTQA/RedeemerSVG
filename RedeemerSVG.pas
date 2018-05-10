@@ -29,6 +29,7 @@ end;
 
 type TFill = record
   Color: TColor;
+  Opacity: Extended;
   Rule: Integer; // ALTERNATE, WINDING
 end;
 
@@ -36,7 +37,8 @@ type TStroke = record
   Width: Extended; // negative Angaben: Prozent, bedeutet Prozent/100*sqrt((Breite²+Höhe²)/2)
   Linecap: Cardinal;
   Linejoin: Cardinal;
-  //Miterlimit: Single;
+  Opacity: Extended;
+  Miterlimit: Extended;
   Color: TColor;
   DashArray: string;
 end;
@@ -56,22 +58,25 @@ type TSVGContext = record
   Stroke: TStroke;
   Font: TCSSFont;
   Display: Boolean;
-  PaintOrderStroke: Boolean;
+  Opacity: Extended;
+  PaintOrderStroke: Boolean; // Kontur zuerst ja/nein
 end;
 
 type TSizeCallbackEvent = procedure (const Viewport: TRealRect; var Dimensions: TRealPoint) of object;
+
+type TChunkIHDR2 = class(TChunkIHDR); // hole protected-Methode PrepareImageData
 
 type TSVGImage = class(TPNGImage)
   private
     procedure InitDrawing();
     procedure FinishDrawing(const Context: TSVGContext);
     function  GetProperty(const Name: string; const CanAttribute: Boolean; const CanCSS: Boolean; out Value: string): Boolean;
-    function GetOnlyValue(const Attribute: string; out Value: Extended): Boolean; overload;
-    function GetOnlyValue(const Attribute: string; out Value: Extended; const PercentageMeasure: Extended): Boolean; overload;
-    function GetOnlyValueDef(const Attribute: string; const Default: Extended): Extended; overload;
-    function GetOnlyValueDef(const Attribute: string; const PercentageMeasure: Extended; const Default: Extended): Extended; overload;
-    function GetURLRef(const URL: string; const List: TDictionary<string,Integer>; out Value: Integer): Boolean;
-    function GetColorExt(const S: string; out Color: TColor): Boolean;
+    function  GetOnlyValue(const Attribute: string; out Value: Extended): Boolean; overload;
+    function  GetOnlyValue(const Attribute: string; out Value: Extended; const PercentageMeasure: Extended): Boolean; overload;
+    function  GetOnlyValueDef(const Attribute: string; const Default: Extended): Extended; overload;
+    function  GetOnlyValueDef(const Attribute: string; const PercentageMeasure: Extended; const Default: Extended): Extended; overload;
+    function  GetURLRef(const URL: string; const List: TDictionary<string,Integer>; out Value: Integer): Boolean;
+    function  GetColorExt(const S: string; out Color: TColor): Boolean;
     procedure LoadBrush(const Fill: TFill);
     procedure LoadPen(const Stroke: TStroke; const Context: TSVGContext);
     procedure LoadFont(const Font: TCSSFont);
@@ -100,7 +105,7 @@ type TSVGImage = class(TPNGImage)
       TempSupersample = 32;
       FinalSupersample = 3;
   public
-    constructor Create(); reintroduce;
+    constructor Create(); override;
     procedure LoadFromStream(Stream: TStream); override;
 end;
 
@@ -112,7 +117,7 @@ var
 implementation
 
 uses
-  Forms, DateUtils; // für Screen
+  Forms; // für Screen.Fonts
 
 function RealRect(Left, Top, Width, Height: Extended): TRealRect;
 begin
@@ -125,8 +130,21 @@ end;
 { TSVGImage }
 
 constructor TSVGImage.Create;
+var
+  NewIHDR: TChunkIHDR2;
 begin
-  inherited CreateBlank(COLOR_RGBALPHA, 8, 1, 1); // 0 führt beim Setzen einer neuen Größe zum Fehler
+  inherited;
+  InitializeGamma;
+  BeingCreated := True;
+  Chunks.Add(TChunkIEND);
+  NewIHDR := Chunks.Add(TChunkIHDR2) as TChunkIHDR2;
+  NewIHDR.ColorType := COLOR_RGBALPHA;
+  NewIHDR.BitDepth := 8;
+  NewIHDR.Width := 1;
+  NewIHDR.Height := 1;
+  NewIHDR.PrepareImageData;
+  Chunks.Add(TChunkIDAT);
+  BeingCreated := False;
 end;
 
 procedure TSVGImage.DrawPoly(Context: TSVGContext; const d: string);
@@ -281,8 +299,8 @@ begin
       end;
       FinishDrawing(Context);
     except
-      raise Exception.Create('DEBUG: <path> failed at ' + IntToStr(p.Position) + ' on input:' + #13#10 + d);
       AbortPath(ChromaPNG.Canvas.Handle);
+      raise Exception.Create('DEBUG: <path> failed at ' + IntToStr(p.Position) + ' on input:' + #13#10 + d);
     end;
   finally
     p.Free;
@@ -421,20 +439,21 @@ var
   NextStopName: string;
   i: TColor;
 begin
+  if XML.IsSelfClosing then Exit; // Inkscape, was machst du für einen Blödsinn?
   NextStopName := '';
   while XML.GoToAndGetNextTag do
   begin
     // Gruppen müssen bearbeitet werden, damit die Sichtbarkeit korrekt für alle Unterelement gilt, Rest nicht
-    if SameText(XML.CurrentTag, '/defs') then
+    if XML.CurrentTag = '/defs' then
     Exit
     else
-    if SameText(XML.CurrentTag, 'symbol') then
+    if XML.CurrentTag = 'symbol' then
     Symbols.Add(XML.GetAttributeDef('id', ''), XML.Position)
     else
-    if SameText(XML.CurrentTag, 'radialGradient') or SameText(XML.CurrentTag, 'linearGradient') then
+    if (XML.CurrentTag = 'radialgradient') or (XML.CurrentTag = 'lineargradient') then
     NextStopName := XML.GetAttributeDef('id', '')
     else
-    if SameText(XML.CurrentTag, 'stop') and (NextStopName <> '') then
+    if (XML.CurrentTag = 'stop') and (NextStopName <> '') then
     if RedeemerHypertextColors.HTMLToColor(XML.GetAttributeDef('stop-color', ''), i, CSSColors) then
     begin
       Colors.Add(NextStopName, Integer(i));
@@ -442,7 +461,7 @@ begin
     end
     else
     else
-    if SameText(XML.CurrentTag, 'solidcolor') then
+    if XML.CurrentTag = 'solidcolor' then
     if RedeemerHypertextColors.HTMLToColor(XML.GetAttributeDef('solid-color', ''), i, CSSColors) then
     begin
       Colors.Add(XML.GetAttributeDef('id', ''), Integer(i));
@@ -454,10 +473,12 @@ end;
 procedure TSVGImage.HandleGroup(Context: TSVGContext);
 var
   d, CancelTag: string;
-  Draw: Boolean;
+  Draw, IsEmpty: Boolean;
 begin
+  // Behandelt zur Not auch Anderes
   Draw := ReadStyle(Context);
   CancelTag := '/' + XML.CurrentTag;
+  IsEmpty := XML.IsSelfClosing();
   while XML.GoToAndGetNextTag do
   begin
     // Gruppen müssen bearbeitet werden, damit die Sichtbarkeit korrekt für alle Unterelement gilt, Rest nicht
@@ -507,6 +528,8 @@ begin
     else
     if XML.CurrentTag = 'text' then
     HandleText(Context);
+    if IsEmpty then
+    Exit;
   end;
 end;
 
@@ -559,42 +582,47 @@ begin
   // Attribute/Eigenschaften laden
   x := TCoordinates.Create(XML.GetAttributeDef('x','0'));
   y := TCoordinates.Create(XML.GetAttributeDef('y','0'));
-  SetTextAlign(ChromaPNG.Canvas.Handle, TA_LEFT or TA_BASELINE);
-  if XML.GetAttribute('text-anchor', s) then
-  if s = 'end' then
-  SetTextAlign(ChromaPNG.Canvas.Handle, TA_RIGHT or TA_BOTTOM)
-  else
-  if s = 'middle' then
-  SetTextAlign(ChromaPNG.Canvas.Handle, TA_CENTER or TA_BOTTOM);
-  // Text zeichnen
-  s := XML.GetInnerTextAndSkip;
-  if s <> '' then
-  begin
-    InitDrawing();
-    LoadFont(Context.Font);
-
-    // Zählen, in wievielen Einzelteilen der Text gerendet werden muss
-    count := 0;
-    while x.GetNextCoordinate(1, x2) do // konkreter Wert für Prozentwert derzeit egal
-    inc(count);
-    x.Position := 1; // Position des Koordinaten-Splitters fürs tatsächliche Rendern zurücksetzen
-
-    // Einzelteile rendern
-    i := 0;
-    while x.GetNextCoordinate(Context.LastViewport.Width, x2) do
+  try
+    SetTextAlign(ChromaPNG.Canvas.Handle, TA_LEFT or TA_BASELINE);
+    if XML.GetAttribute('text-anchor', s) then
+    if s = 'end' then
+    SetTextAlign(ChromaPNG.Canvas.Handle, TA_RIGHT or TA_BASELINE)
+    else
+    if s = 'middle' then
+    SetTextAlign(ChromaPNG.Canvas.Handle, TA_CENTER or TA_BASELINE);
+    // Text zeichnen
+    s := XML.GetInnerTextAndSkip;
+    if s <> '' then
     begin
-      inc(i);
-      if i < count then
+      InitDrawing();
+      LoadFont(Context.Font);
+
+      // Zählen, in wievielen Einzelteilen der Text gerendet werden muss
+      count := 0;
+      while x.GetNextCoordinate(1, x2) do // konkreter Wert für Prozentwert derzeit egal
+      inc(count);
+      x.Position := 1; // Position des Koordinaten-Splitters fürs tatsächliche Rendern zurücksetzen
+
+      // Einzelteile rendern
+      i := 0;
+      while x.GetNextCoordinate(Context.LastViewport.Width, x2) do
       begin
-      s2 := LeftStr(s, 1);
-      Delete(s, 1, 1);
-      end
-      else
-      s2 := s;
-      y.GetNextCoordinate(Context.LastViewport.Height, y2); // wenn nicht, dann halt nicht (bleibt unverändert)
-      ExtTextOut(ChromaPNG.Canvas.Handle, Integer(Round(x2*TempSupersample)), Integer(Round(y2*TempSupersample)), 0, nil, PChar(s2), Length(s2), nil);
+        inc(i);
+        if i < count then
+        begin
+        s2 := Copy(s, 1, 1); // soll nur verhindern, über das Ende hinaus zu lesen, daher keine Verwendung von s[1]
+        Delete(s, 1, 1);
+        end
+        else
+        s2 := s;
+        y.GetNextCoordinate(Context.LastViewport.Height, y2); // wenn nicht, dann halt nicht (bleibt unverändert)
+        ExtTextOut(ChromaPNG.Canvas.Handle, Integer(Round(x2*TempSupersample)), Integer(Round(y2*TempSupersample)), 0, nil, PChar(s2), Length(s2), nil);
+      end;
+      FinishDrawing(Context);
     end;
-    FinishDrawing(Context);
+  finally
+    x.Free;
+    y.Free;
   end;
 end;
 
@@ -677,14 +705,18 @@ begin
       if XML.GetAttribute('viewbox', Value) then
       begin
         Coords := TCoordinates.Create(Value);
-        Coords.GetNextCoordinate(Context.LastViewport.Left);
-        Coords.GetNextCoordinate(Context.LastViewport.Top);
-        Coords.GetNextCoordinate(Context.LastViewport.Width);
-        Coords.GetNextCoordinate(Context.LastViewport.Height);
-        if not haswidth then
-        Context.Dimensions.x := Context.LastViewport.Width;
-        if not hasheight then
-        Context.Dimensions.y := Context.LastViewport.Height;
+        try
+          Coords.GetNextCoordinate(Context.LastViewport.Left);
+          Coords.GetNextCoordinate(Context.LastViewport.Top);
+          Coords.GetNextCoordinate(Context.LastViewport.Width);
+          Coords.GetNextCoordinate(Context.LastViewport.Height);
+          if not haswidth then
+          Context.Dimensions.x := Context.LastViewport.Width;
+          if not hasheight then
+          Context.Dimensions.y := Context.LastViewport.Height;
+        finally
+          Coords.Free;
+        end;
       end
       else
       Context.LastViewport := RealRect(0,0,Context.Dimensions.x,Context.Dimensions.y);
@@ -695,16 +727,19 @@ begin
 
       // Restlichen Kontext initialisieren
       Context.Fill.Rule := WINDING;
+      Context.Fill.Opacity := 1;
       Context.Fill.Color := clBlack;
       Context.Stroke.Color := clNone;
       Context.Stroke.Width := 1;
       Context.Stroke.Linecap := PS_ENDCAP_FLAT;
       Context.Stroke.Linejoin := PS_JOIN_MITER;
-      //Context.Stroke.Miterlimit := 4;
+      Context.Stroke.Opacity := 1;
+      Context.Stroke.Miterlimit := 4;
       Context.Font.Family := 'Times New Roman';
       Context.Font.Size := 16;
       Context.Font.Weight := False;
       Context.Font.Style := False;
+      Context.Opacity := 1;
       Context.Display := True;
       Context.PaintOrderStroke := False;
       // Standard-Bosstransformation
@@ -736,13 +771,14 @@ begin
     XML.Free;
     Symbols.Free;
     Colors.Free;
+    Recalls.Free;
   end;
 end;
 
 procedure TSVGImage.LoadBrush(const Fill: TFill);
 begin
   ChromaPNG.Canvas.Brush.Color := Fill.Color; // wenn man das nach Style setzt, geht das nicht
-  if Fill.Color = clNone then
+  if (Fill.Color = clNone) or (Fill.Opacity < 0.2) then
   ChromaPNG.Canvas.Brush.Style := bsClear
   else
   ChromaPNG.Canvas.Brush.Style := bsSolid;
@@ -759,11 +795,10 @@ var
   Brush: tagLOGBRUSH;
   Dashes: TCoordinates;
   DashData: array of DWord;
-  f: Extended;
-  PercentageScale: Extended;
-  Scale: Extended;
+  f, PercentageScale, Scale: Extended;
+  Miter: Single;
 begin
-  if (Stroke.Color = clNone) or (Stroke.Width = 0) then
+  if (Stroke.Color = clNone) or (Stroke.Width = 0) or (Stroke.Opacity < 0.2) then
   Flags := PS_NULL // Width kann nicht auf weniger als 1 gesetzt werden, weder mit ExtCreatePen noch mit TPen
   else
   Flags := PS_SOLID;
@@ -787,7 +822,7 @@ begin
           if Length(DashData) = 16 then
           Break; // undokumente Einschränkung von Length(DashData) auf <= 16 in GDI
         end;
-        // Deaktivierung eines Sonderfalls in GDI, ein ungerade lange Dasharrays bei ungerade Wiederholungen umkehrt durchläuft
+        // Deaktivierung eines Sonderfalls in GDI, das ein ungerade lange Dasharrays bei ungerade Wiederholungen invertiert durchläuft
         if Length(DashData) mod 2 = 1 then
         begin
           SetLength(DashData, Length(DashData) + 1);
@@ -803,16 +838,20 @@ begin
 
   Brush.lbStyle := BS_SOLID;
   Brush.lbColor := Stroke.Color;
+  Miter := Stroke.Miterlimit * 0.9999999; // GDI schneidet AB der Gehrungsgrenze ab, SVG schneider ÜBER der Grenze ab
   DeleteObject(ChromaPNG.Canvas.Pen.Handle);
   ChromaPNG.Canvas.Pen.Handle := ExtCreatePen(PS_GEOMETRIC or Flags or Stroke.Linecap or Stroke.Linejoin, Width, Brush, Length(DashData), DashData);
+  SetMiterLimit(ChromaPNG.Canvas.Handle, Miter, nil);
   Brush.lbColor := clWhite;
   DeleteObject(OpacityPNG.Canvas.Pen.Handle);
   OpacityPNG.Canvas.Pen.Handle := ExtCreatePen(PS_GEOMETRIC or Flags or Stroke.Linecap or Stroke.Linejoin, Width, Brush, Length(DashData), DashData);
+  SetMiterLimit(OpacityPNG.Canvas.Handle, Miter, nil);
 end;
 
 procedure TSVGImage.ReadFill(var Fill: TFill);
 var
   s: string;
+  f: Extended;
   TempColor: TColor;
 begin
   // Füllung
@@ -824,6 +863,11 @@ begin
     if GetColorExt(s, TempColor) then
     Fill.Color := TempColor;
   end;
+
+  // Deckfähigkeit (wird entweder als transparent oder nicht interpretiert)
+  if GetProperty('fill-opacity', True, True, s) then
+  if TCoordinates.GetOnlyValue(s, f) then
+  Fill.Opacity := f;
 
   // Umgang mit Überschneidungen
   if GetProperty('fill-rule',True,True,s) then
@@ -903,6 +947,7 @@ end;
 procedure TSVGImage.ReadStroke(var Stroke: TStroke);
 var
   s: string;
+  f: Extended;
   TempColor: TColor;
 begin
   // Farbe
@@ -912,6 +957,16 @@ begin
   else
   if GetColorExt(s, TempColor) then
   Stroke.Color := TempColor;
+
+  // Deckfähigkeit (wird entweder als transparent oder nicht interpretiert)
+  if GetProperty('stroke-opacity', True, True, s) then
+  if TCoordinates.GetOnlyValue(s, f) then
+  Stroke.Opacity := f;
+
+  // Gehrungsgrenze
+  if GetProperty('stroke-miterlimit', True, True, s) then
+  if TCoordinates.GetOnlyValue(s, f) then
+  Stroke.Miterlimit := f;
 
   // Breite
   if GetProperty('stroke-width',True,True,s) then
@@ -965,90 +1020,100 @@ begin
   // Sichtbarkeit laden, ggf. abbrechen, da display auch das Zeichnen aller Kinder verhindert
   if not Context.Display then Exit;
   CurrentStyle := TStyle.Create(XML.GetAttributeDef('style', ''));
-  if GetProperty('display', True, True, s) then
-  Context.Display := Context.Display and (s <> 'none');
-  if not Context.Display then Exit;
-
-  // Zeichenreihenfolge laden
-  if GetProperty('paint-order', True, True, s) then
-  Context.PaintOrderStroke := s = 'stroke';
-
-  // Füllungs-, Konturen- und Schrifteigenschaften laden
-  ReadFill(Context.Fill);
-  ReadStroke(Context.Stroke);
-  ReadFont(Context.Font);
-  
-  // Affine Abbildungen laden
-  if XML.GetAttribute('transform', s) then // keine CSS-Eigenschaft!
   try
-    steps := TStyleSplitter.Create(s, True);
+    if GetProperty('display', True, True, s) then
+    Context.Display := Context.Display and (s <> 'none');
+    if not Context.Display then Exit;
+
+    // Deckfähigkeit (wird entweder als transparent oder nicht interpretiert)
+    if GetProperty('opacity', True, True, s) then
+    if TCoordinates.GetOnlyValue(s, x1) then
+    Context.Opacity := Context.Opacity * x1;
+    Context.Display := not (Context.Opacity < 0.2);
+    if not Context.Display then Exit;
+
+    // Zeichenreihenfolge laden
+    if GetProperty('paint-order', True, True, s) then
+    Context.PaintOrderStroke := s = 'stroke';
+
+    // Füllungs-, Konturen- und Schrifteigenschaften laden
+    ReadFill(Context.Fill);
+    ReadStroke(Context.Stroke);
+    ReadFont(Context.Font);
+
+    // Affine Abbildungen laden
+    if XML.GetAttribute('transform', s) then // keine CSS-Eigenschaft!
     try
-      for i := Low(Steps.Values) to High(Steps.Values) do // es werden immer neue innere (d.h. als erstes (direkt nach Rückgängigmachung von TempScale) auszuführende!) Transformationen angehängt
-      begin
-        TStyleSplitter.GetBracket(Steps.Values[i], Name, Content);
-        params := TCoordinates.Create(Content);
-        try
-          // Translation, Name ist übrigens case-sensitive
-          if Name = 'translate' then
-          begin
-            if params.GetNextCoordinate(x1) and params.GetNextCoordinate(x2) then
-            Context.Transformations := AffineTransformation(AffineTranslation(x1, x2), Context.Transformations);
-          end else
-          // Drehung
-          if Name = 'rotate' then
-          begin
-            if params.GetNextCoordinate(x1) then
-            if params.GetNextCoordinate(x2) and params.GetNextCoordinate(x3) then
-            Context.Transformations := AffineTransformation(AffineRotation(x1, x2, x3), Context.Transformations)
-            else
-            Context.Transformations := AffineTransformation(AffineRotation(x1), Context.Transformations);
-          end else
-          // Streckung und Stauchung
-          if Name = 'scale' then
-          begin
-            if params.GetNextCoordinate(x1) then
-            if params.GetNextCoordinate(x2) then
-            Context.Transformations := AffineTransformation(AffineScale(x1, x2), Context.Transformations)
-            else
-            Context.Transformations := AffineTransformation(AffineScale(x1, x1), Context.Transformations);
-          end else
-          // 2 verschiedene Scherungen
-          if Name = 'skewX' then
-          begin
-            if params.GetNextCoordinate(x1) then
-            Context.Transformations := AffineTransformation(AffineSkewX(x1), Context.Transformations);
-          end else
-          if Name = 'skewY' then
-          begin
-            if params.GetNextCoordinate(x1) then
-            Context.Transformations := AffineTransformation(AffineSkewY(x1), Context.Transformations);
-          end else
-          // Affine Abbildung
-          if Name = 'matrix' then
-          begin
-            if params.GetNextCoordinate(x1) and params.GetNextCoordinate(x2) and params.GetNextCoordinate(x3) and
-               params.GetNextCoordinate(x4) and params.GetNextCoordinate(x5) and params.GetNextCoordinate(x6) then
-            Context.Transformations := AffineTransformation(AffineTransformation(x1,x2,x3,x4,x5,x6), Context.Transformations);
+      steps := TStyleSplitter.Create(s, True);
+      try
+        for i := Low(Steps.Values) to High(Steps.Values) do // es werden immer neue innere (d.h. als erstes (direkt nach Rückgängigmachung von TempScale) auszuführende!) Transformationen angehängt
+        begin
+          TStyleSplitter.GetBracket(Steps.Values[i], Name, Content);
+          params := TCoordinates.Create(Content);
+          try
+            // Translation, Name ist übrigens case-sensitive
+            if Name = 'translate' then
+            begin
+              if params.GetNextCoordinate(x1) and params.GetNextCoordinate(x2) then
+              Context.Transformations := AffineTransformation(AffineTranslation(x1, x2), Context.Transformations);
+            end else
+            // Drehung
+            if Name = 'rotate' then
+            begin
+              if params.GetNextCoordinate(x1) then
+              if params.GetNextCoordinate(x2) and params.GetNextCoordinate(x3) then
+              Context.Transformations := AffineTransformation(AffineRotation(x1, x2, x3), Context.Transformations)
+              else
+              Context.Transformations := AffineTransformation(AffineRotation(x1), Context.Transformations);
+            end else
+            // Streckung und Stauchung
+            if Name = 'scale' then
+            begin
+              if params.GetNextCoordinate(x1) then
+              if params.GetNextCoordinate(x2) then
+              Context.Transformations := AffineTransformation(AffineScale(x1, x2), Context.Transformations)
+              else
+              Context.Transformations := AffineTransformation(AffineScale(x1, x1), Context.Transformations);
+            end else
+            // 2 verschiedene Scherungen
+            if Name = 'skewX' then
+            begin
+              if params.GetNextCoordinate(x1) then
+              Context.Transformations := AffineTransformation(AffineSkewX(x1), Context.Transformations);
+            end else
+            if Name = 'skewY' then
+            begin
+              if params.GetNextCoordinate(x1) then
+              Context.Transformations := AffineTransformation(AffineSkewY(x1), Context.Transformations);
+            end else
+            // Affine Abbildung
+            if Name = 'matrix' then
+            begin
+              if params.GetNextCoordinate(x1) and params.GetNextCoordinate(x2) and params.GetNextCoordinate(x3) and
+                 params.GetNextCoordinate(x4) and params.GetNextCoordinate(x5) and params.GetNextCoordinate(x6) then
+              Context.Transformations := AffineTransformation(AffineTransformation(x1,x2,x3,x4,x5,x6), Context.Transformations);
+            end;
+          finally
+            params.Free;
           end;
-        finally
-          params.Free;
         end;
+      finally
+        steps.Free;
       end;
-    finally
-      steps.Free;
+    except
     end;
-  except
+
+    Result := True;
+  finally
+    CurrentStyle.Free;
   end;
-
-  Result := True;
-
 end;
 
 { TCustomUTF8Encoding }
 
 constructor TCustomUTF8Encoding.Create;
 begin
-  inherited Create(CP_UTF8, 0, 0); // Embas UTF8 setzt MB_ERR_INVALID_CHARS und führt zu dem Problem
+  inherited Create(CP_UTF8, 0, 0); // TEncoding.UTF8 ohne MB_ERR_INVALID_CHARS
 end;
 
 initialization
